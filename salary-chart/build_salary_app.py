@@ -308,6 +308,19 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .rost-add:hover{border-color:var(--green); color:var(--green);}
   .rost-add .ra-plus{font-size:16px; width:18px; text-align:center;}
   .rost-add .ra-label{font-size:11.5px;}
+  .rost-add.open{border-style:solid; border-color:var(--green); color:var(--green);}
+
+  /* Inline "add player from another team" panel (replaces the old modal) */
+  .add-panel{margin:6px 0 10px; padding:10px 11px; border:1px solid var(--green);
+    border-radius:8px; background:var(--card);}
+  .add-panel .ap-title{font-size:11.5px; font-weight:700; color:var(--text); margin-bottom:8px;}
+  .add-panel .ap-label{font-size:10px; font-weight:600; letter-spacing:.3px; color:var(--subtext);
+    text-transform:uppercase; margin:8px 0 3px;}
+  .add-panel select{width:100%; font-size:12px; padding:5px 8px;}
+  .add-panel .ap-preview{margin-top:8px; font-size:10.5px; line-height:1.5; color:var(--subtext);}
+  .add-panel .ap-err{color:var(--red); font-size:10.5px; min-height:13px; margin-top:5px;}
+  .add-panel .ap-btns{display:flex; gap:8px; margin-top:10px;}
+  .add-panel .ap-btns button{flex:1; padding:6px 0; font-size:12px; font-weight:600;}
 
   /* Inline extension salary entry (rendered inside a player card) */
   .inline-form{margin-top:9px; padding-top:9px; border-top:1px solid var(--line);}
@@ -464,21 +477,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="dlg-btns">
     <button id="extCancel">Cancel</button>
     <button class="b-green" id="extSubmit">Add extension</button></div>
-</dialog>
-
-<dialog id="addPlayerDialog">
-  <h2>Add player from another team</h2>
-  <div class="f-label">From team</div>
-  <select id="addPlayerTeam"></select>
-  <div class="f-label">Player</div>
-  <select id="addPlayerSelect"></select>
-  <div class="f-label">Join in season</div>
-  <select id="addPlayerYear"></select>
-  <div id="addPlayerPreview" class="muted" style="margin-top:8px"></div>
-  <div class="err" id="addPlayerErr"></div>
-  <div class="dlg-btns">
-    <button id="addPlayerCancel">Cancel</button>
-    <button class="b-green" id="addPlayerSubmit">Add to roster</button></div>
 </dialog>
 
 <dialog id="tradeDialog">
@@ -1270,6 +1268,7 @@ let highlightedPlayers=expandedPlayers;
 let expandedYears=new Set();
 let removeMode=new Set();   // player names whose "remove seasons" mode is active
 let inlineForm=null;   // {name, mode:"extend"|"remove"} — open form inside a player card
+let addPlayerOpen=false;   // is the inline "add player from another team" panel open?
 
 function redrawChart(){
   if(!ST) return;
@@ -1499,11 +1498,41 @@ function rebuildSidebar(){
     rl.appendChild(card);
   }
 
-  // blank "add player" item
-  const add=document.createElement("div"); add.className="rost-add";
-  add.innerHTML=`<span class="ra-plus">+</span><span class="ra-label">Add player from another team</span>`;
-  add.onclick=()=>openAddPlayerDialog();
+  // "add player from another team" — toggles an inline panel (no pop-up)
+  const add=document.createElement("div"); add.className="rost-add"+(addPlayerOpen?" open":"");
+  add.innerHTML=`<span class="ra-plus">${addPlayerOpen?"×":"+"}</span><span class="ra-label">Add player from another team</span>`;
+  add.onclick=()=>{ addPlayerOpen?closeAddPlayer():openAddPlayerPanel(); };
   rl.appendChild(add);
+
+  if(addPlayerOpen){
+    rl.appendChild(buildAddPlayerPanel());
+    // populate the freshly-built selects
+    rebuildAddPlayerTeams();
+  }
+}
+
+/* Build the inline add-player panel DOM (same controls the modal used,
+   keeping the original element IDs so existing handlers keep working). */
+function buildAddPlayerPanel(){
+  const wrap=document.createElement("div"); wrap.className="add-panel";
+  wrap.innerHTML=
+    `<div class="ap-title">Add player from another team</div>`+
+    `<div class="ap-label">From team</div><select id="addPlayerTeam"></select>`+
+    `<div class="ap-label">Player</div><select id="addPlayerSelect"></select>`+
+    `<div class="ap-label">Join in season</div><select id="addPlayerYear"></select>`+
+    `<div class="ap-preview" id="addPlayerPreview"></div>`+
+    `<div class="ap-err" id="addPlayerErr"></div>`+
+    `<div class="ap-btns">`+
+      `<button id="addPlayerCancel">Cancel</button>`+
+      `<button class="b-green" id="addPlayerSubmit">Add to roster</button>`+
+    `</div>`;
+  // wire handlers (the panel is rebuilt on each rebuildSidebar, so re-bind)
+  wrap.querySelector("#addPlayerTeam").onchange=rebuildAddPlayerList;
+  wrap.querySelector("#addPlayerSelect").onchange=()=>rebuildAddPlayerYears();
+  wrap.querySelector("#addPlayerYear").onchange=updateAddPlayerPreview;
+  wrap.querySelector("#addPlayerCancel").onclick=closeAddPlayer;
+  wrap.querySelector("#addPlayerSubmit").onclick=submitAddPlayer;
+  return wrap;
 }
 
 /* ── Inline extension entry (rendered inside a player card) ──
@@ -1642,7 +1671,7 @@ function loadTeam(name, csvText){
   try{ st=new RosterState(csvText??TEAMS[name].csv, name); }
   catch(err){ alert("Could not parse CSV:\n"+err.message); return; }
   ST=st; optionsCollapsed=false;
-  expandedPlayers.clear(); expandedYears=new Set(); removeMode=new Set(); inlineForm=null;
+  expandedPlayers.clear(); expandedYears=new Set(); removeMode=new Set(); inlineForm=null; addPlayerOpen=false;
   rebuildStartSelector(); rebuildSidebar(); redrawChart();
 }
 function rebuildTeamSelector(selected){
@@ -1801,7 +1830,7 @@ canvas.addEventListener("click",(e)=>{
   rebuildSidebar();
   redrawChart();
   const card=document.querySelector(`.rost-card[data-player="${cssEsc(name)}"]`);
-  if(card) card.scrollIntoView({block:"nearest"});
+  if(card && card.scrollIntoView) card.scrollIntoView({block:"nearest"});
 });
 function cssEsc(s){ return (window.CSS&&CSS.escape)?CSS.escape(s):s.replace(/"/g,'\\"'); }
 function clearSelection(){
@@ -1817,22 +1846,34 @@ function clearSelection(){
 //     set, so they always match: expanding/clicking adds a highlight, closing
 //     a panel or clicking a highlighted bar removes it.) ──
 
-/* ── Add Player dialog ── */
-const addPlayerDlg=$("addPlayerDialog");
+/* ── Add Player (inline panel) ── */
 let addPlayerCache=[];   // players for the currently-selected source team
 function otherTeamNames(){
   return Object.keys(TEAMS).filter(t=>t!==ST.teamName);
 }
-function openAddPlayerDialog(){
+function openAddPlayerPanel(){
   if(!ST) return;
+  if(!otherTeamNames().length){alert("No other teams loaded. Add more team CSVs first."); return;}
+  addPlayerOpen=true;
+  rebuildSidebar();
+  // scroll the panel into view once it's in the DOM
+  const panel=document.querySelector(".add-panel");
+  if(panel && panel.scrollIntoView) panel.scrollIntoView({block:"nearest"});
+}
+function closeAddPlayer(){
+  if(!addPlayerOpen) return;
+  addPlayerOpen=false;
+  rebuildSidebar();
+}
+// Populate the team dropdown, then cascade to players/years/preview.
+function rebuildAddPlayerTeams(){
+  const tsel=$("addPlayerTeam"); if(!tsel) return;
   const others=otherTeamNames();
-  if(!others.length){alert("No other teams loaded. Add more team CSVs first."); return;}
-  const tsel=$("addPlayerTeam"); tsel.innerHTML="";
+  tsel.innerHTML="";
   for(const t of others){const o=document.createElement("option"); o.value=t; o.textContent=t; tsel.appendChild(o);}
   tsel.value=others[0];
   $("addPlayerErr").textContent="";
   rebuildAddPlayerList();
-  addPlayerDlg.showModal();
 }
 function rebuildAddPlayerList(){
   const team=$("addPlayerTeam").value;
@@ -1914,11 +1955,9 @@ function updateAddPlayerPreview(){
   box.innerHTML="Contract as added:<br>"+(parts.join("<br>")||"(no seasons at this start year)")
     +(dropped>0?`<br><span style="color:var(--orange)">${dropped} earlier season(s) dropped — joining mid-contract</span>`:"");
 }
-$("addPlayerYear").onchange=updateAddPlayerPreview;
-$("addPlayerTeam").onchange=rebuildAddPlayerList;
-$("addPlayerSelect").onchange=()=>{rebuildAddPlayerYears();};
-$("addPlayerCancel").onclick=()=>addPlayerDlg.close();
-$("addPlayerSubmit").onclick=()=>{
+// Handlers are bound inside buildAddPlayerPanel (the panel is rebuilt on each
+// rebuildSidebar). submitAddPlayer adds the player and closes the panel.
+function submitAddPlayer(){
   const err=$("addPlayerErr"); err.textContent="";
   const team=$("addPlayerTeam").value;
   const i=parseInt($("addPlayerSelect").value);
@@ -1931,8 +1970,8 @@ $("addPlayerSubmit").onclick=()=>{
     return;
   }
   ST.addPlayer(dict, team);
-  addPlayerDlg.close(); rebuildSidebar(); redrawChart();
-};
+  addPlayerOpen=false; rebuildSidebar(); redrawChart();
+}
 
 /* ── Extension dialog ── */
 const extDlg=$("extDialog"); let extExpiring=[];
