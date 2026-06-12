@@ -168,13 +168,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
   #main{flex:1; display:flex; min-height:0;}
   #sidebar{
-    width:268px; flex:0 0 auto; background:var(--sidebar);
-    overflow-y:auto; padding:8px 12px 24px; border-right:1px solid var(--line);
+    width:368px; flex:0 0 auto; background:var(--sidebar);
+    overflow-y:auto; padding:8px 14px 24px; border-right:1px solid var(--line);
   }
   #sidebar::-webkit-scrollbar{width:9px;}
   #sidebar::-webkit-scrollbar-thumb{background:#3a3a3a; border-radius:5px;}
   #chartwrap{flex:1; min-width:0; position:relative; background:var(--chart-bg);}
-  #chart{position:absolute; inset:10px; width:calc(100% - 20px); height:calc(100% - 20px);}
+  #chart{position:absolute; inset:10px; width:calc(100% - 20px); height:calc(100% - 20px); cursor:pointer;}
 
   .section-h{
     display:flex; align-items:center; justify-content:space-between;
@@ -221,31 +221,167 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .undo-btn{background:none; border:none; color:var(--accent); font-size:11px; padding:0 4px; cursor:pointer;}
   .ext-year{font:11px/1.6 Consolas,Menlo,monospace; color:var(--text); padding-left:4px;}
 
+  /* Roster section */
+  .rost-card{background:var(--card); border:1px solid var(--line); border-radius:7px; margin:4px 0; overflow:hidden;}
+  .rost-card.open{border-color:var(--accent);}
+  .rost-card.selected{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent);}
+  .rost-head{display:flex; align-items:center; gap:7px; padding:7px 9px; cursor:pointer; user-select:none;}
+  .rost-head:hover{background:var(--panel);}
+  .rost-card .rc-chev{color:var(--subtext); font-size:10px; transition:transform .15s; display:inline-block;}
+  .rost-card.open .rc-chev{transform:rotate(90deg);}
+  .rc-name{flex:1; font-weight:600; font-size:12px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  /* Name colour encodes change state (replaces the old pill tags):
+     acquired→green, extended→blue, has removed seasons→red. */
+  .rc-name.nm-added{color:var(--green);}
+  .rc-name.nm-ext{color:var(--blue);}
+  .rc-name.nm-rem{color:var(--red);}
+  .rc-total{color:var(--subtext); font:11px Consolas,Menlo,monospace;}
+  .rc-revert{background:none; border:none; color:var(--subtext); cursor:pointer; font-size:14px;
+    line-height:1; padding:2px 4px; border-radius:5px; margin-left:2px;}
+  .rc-revert:hover{color:var(--accent); background:var(--panel);}
+  .rc-revert:disabled{opacity:.28; cursor:default; background:none; color:var(--subtext);}
+  /* header "remove seasons" × toggle, sits just right of the undo button */
+  .rc-rmtoggle{background:none; border:none; color:var(--subtext); cursor:pointer; font-size:13px;
+    line-height:1; padding:2px 5px; border-radius:5px; margin-left:1px;}
+  .rc-rmtoggle:hover{color:var(--red); background:var(--panel);}
+  .rc-rmtoggle.active{color:#fff; background:var(--red);}
+  .rc-rmtoggle:disabled{opacity:.28; cursor:default; background:none; color:var(--subtext);}
+  /* when remove-mode is on, on-books year rows become clickable red boxes,
+     newest (last) first */
+  .rc-year.rcy-removable{cursor:pointer; border:1px solid rgba(232,106,106,0.55);
+    background:rgba(232,106,106,0.12); border-radius:5px; padding:1px 6px; margin:2px 0;}
+  .rc-year.rcy-removable:hover{background:rgba(232,106,106,0.24);}
+  .rc-year.rcy-removable.rcy-locked{cursor:not-allowed; opacity:.4; border-color:var(--line);
+    background:none;}
+  .rc-rmhint{color:var(--red); font-size:10px; margin:5px 0 2px; font-style:italic;}
+  .rost-body{padding:4px 10px 10px; border-top:1px solid var(--line);}
+  .rc-year{display:flex; align-items:center; gap:6px; font:11px/1.7 Consolas,Menlo,monospace;}
+  .rc-year .rcy-yr{color:var(--subtext); width:54px; flex:0 0 54px;}
+  .rc-year .rcy-sal{color:var(--text); width:58px; flex:0 0 58px; text-align:right; font-weight:600;}
+  .rc-year .rcy-pct{color:var(--subtext); width:42px; flex:0 0 42px; text-align:right; font-size:10px;}
+  /* fixed-width tag slot so the number columns stay aligned whether or not a
+     row carries an opt/ext/declined badge */
+  .rc-year .rcy-tag{flex:0 0 26px; width:26px; font-size:9px; text-transform:uppercase; font-weight:700;}
+  .rc-year .rcy-tag.t-opt{color:var(--blue);}
+  .rc-year .rcy-tag.t-ext{color:var(--green);}
+  .rc-year .rcy-tag.t-decl{color:var(--red);}
+  .rc-year.rcy-declined .rcy-sal,
+  .rc-year.rcy-declined .rcy-yr,
+  .rc-year.rcy-declined .rcy-pct{text-decoration:line-through; opacity:.6;}
+  .rc-year .rcy-spacer{flex:1;}
+  /* inline option accept/decline beside the year */
+  .rcy-opt-seg{display:inline-flex; gap:4px; margin-left:auto; flex:0 0 auto;}
+  .rcy-opt-seg .ob{height:20px; padding:0 7px; line-height:1; font-size:10px; font-weight:700;
+    text-transform:uppercase; letter-spacing:.2px; border-radius:4px;
+    display:flex; align-items:center; justify-content:center; cursor:pointer;}
+  /* Pre-selection: each choice shows a faint tinted box hinting its colour. */
+  .rcy-opt-seg .ob-acc{border:1px solid rgba(106,232,138,0.55); background:rgba(106,232,138,0.12); color:var(--green);}
+  .rcy-opt-seg .ob-dec{border:1px solid rgba(232,106,106,0.55); background:rgba(232,106,106,0.12); color:var(--red);}
+  .rcy-opt-seg .ob-acc:hover{background:rgba(106,232,138,0.22);}
+  .rcy-opt-seg .ob-dec:hover{background:rgba(232,106,106,0.22);}
+  /* Selected state: solid fill. */
+  .rcy-opt-seg .ob.on-acc{color:#111; background:var(--green); border-color:var(--green);}
+  .rcy-opt-seg .ob.on-dec{color:#111; background:var(--red);   border-color:var(--red);}
+  .rcy-opt-seg .ob:disabled{opacity:.4; cursor:not-allowed;}
+  .rcy-optlbl{color:var(--accent); font-size:9px; text-transform:uppercase; margin-left:6px;}
+  /* inline year-remove (×) on the trailing edge of a contract row */
+  .rcy-del{background:none; border:none; color:var(--subtext); cursor:pointer; font-size:12px;
+    padding:0 2px; line-height:1; opacity:.55;}
+  .rcy-del:hover{color:var(--red); opacity:1;}
+  .opt-lock{color:var(--subtext); font-size:10px; margin-top:4px; font-style:italic;}
+  /* "add extension year" plus row, styled like add-player */
+  .rc-addyear{display:flex; align-items:center; gap:8px; margin:7px 0 2px; padding:6px 8px; cursor:pointer;
+    border:1px dashed var(--line); border-radius:6px; color:var(--subtext); font-size:11px;}
+  .rc-addyear:hover{border-color:var(--blue); color:var(--blue);}
+  .rc-addyear .ay-plus{font-size:15px; width:16px; text-align:center;}
+  .rc-addyear.disabled{opacity:.45; cursor:not-allowed; border-color:var(--line); color:var(--subtext);}
+  .rc-addyear.disabled:hover{border-color:var(--line); color:var(--subtext);}
+  .rc-btn.disabled,.rc-btn:disabled{opacity:.4; cursor:not-allowed;}
+  .rc-actions{display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;}
+  .rc-btn{font-size:11px; font-weight:600; border-radius:5px; padding:4px 10px; cursor:pointer;
+    background:var(--card); border:1px solid var(--line); color:var(--text);}
+  .rc-remove{color:var(--red); border-color:var(--red);}    .rc-remove:hover{background:var(--red); color:#fff;}
+  .rc-unext{color:var(--subtext);}                          .rc-unext:hover{background:var(--panel);}
+  .rc-undo{color:var(--accent); border-color:var(--accent);} .rc-undo:hover{background:var(--accent); color:#fff;}
+  .rost-add{display:flex; align-items:center; gap:8px; margin:6px 0; padding:8px 9px; cursor:pointer;
+    border:1px dashed var(--line); border-radius:7px; color:var(--subtext);}
+  .rost-add:hover{border-color:var(--green); color:var(--green);}
+  .rost-add .ra-plus{font-size:16px; width:18px; text-align:center;}
+  .rost-add .ra-label{font-size:11.5px;}
+
+  /* Inline extension salary entry (rendered inside a player card) */
+  .inline-form{margin-top:9px; padding-top:9px; border-top:1px solid var(--line);}
+  .inline-form .if-title{font-size:11px; font-weight:700; color:var(--text); margin-bottom:6px;}
+  .inline-form .if-row{display:flex; align-items:center; gap:6px; margin:5px 0; font-size:11px;}
+  .inline-form .if-row .ifr-yr{width:54px; font-weight:600; color:var(--text); font-family:Consolas,Menlo,monospace;}
+  .inline-form .if-row input[type=number]{width:60px; background:var(--card); color:var(--text);
+    border:1px solid var(--line); border-radius:5px; padding:4px 6px; font:inherit;}
+  .inline-form .ifr-calc{color:var(--subtext); font-size:10px; font-family:Consolas,Menlo,monospace;}
+  .inline-form .unit-tog{display:flex; border:1px solid var(--line); border-radius:5px; overflow:hidden;}
+  .inline-form .unit-tog button{border:none; border-radius:0; padding:4px 7px; font-size:10.5px;
+    background:var(--sidebar); color:var(--subtext); cursor:pointer;}
+  .inline-form .unit-tog button.on{background:var(--accent); color:#fff; font-weight:700;}
+  .inline-form .if-opt{display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text); margin-top:6px; cursor:pointer;}
+  .inline-form .if-err{color:var(--red); font-size:10.5px; min-height:13px; margin-top:4px;}
+  .inline-form .if-btns{display:flex; gap:8px; margin-top:8px;}
+  .inline-form .if-btns .rc-btn{flex:1;}
+  .rc-btn.rc-extend{color:var(--blue); border-color:var(--blue);}
+  .rc-btn.rc-extend:hover{background:var(--blue); color:#fff;}
+  /* inline "make option year" toggle button */
+  .if-optbtn{display:block; width:100%; margin-top:8px; font-size:11px; font-weight:600;
+    color:var(--blue); border:1px solid rgba(106,176,245,0.55); background:rgba(106,176,245,0.10);}
+  .if-optbtn:hover{background:rgba(106,176,245,0.20);}
+  .if-optbtn.on{color:#111; background:var(--blue); border-color:var(--blue);}
+  .rc-btn.active{background:var(--panel);}
+
   /* Yearly summary status boxes */
   #totals{display:flex; flex-direction:column; gap:4px; padding:0; background:none;}
   .ysum-cell{
-    display:flex; align-items:center; gap:8px;
     background:var(--card); border:1px solid var(--line); border-radius:6px;
-    padding:6px 9px; cursor:default;
-    font:11px/1.3 Consolas,Menlo,monospace; white-space:nowrap;
+    margin-bottom:4px; overflow:hidden;
   }
-  .ysum-cell:hover{box-shadow:0 0 0 1px var(--accent);}
+  .ys-head{display:flex; align-items:center; gap:8px; padding:6px 9px; cursor:pointer; user-select:none;
+    font:11px/1.3 Consolas,Menlo,monospace; white-space:nowrap;}
+  .ys-head:hover{filter:brightness(1.15);}
+  .ys-chev{color:var(--subtext); font-size:10px; transition:transform .15s; display:inline-block;}
+  .ysum-cell.open .ys-chev{transform:rotate(90deg);}
   .ysum-cell .ys-yr{color:var(--text); width:52px;}
-  .ysum-cell .ys-tot{color:var(--subtext); width:54px;}
-  .ysum-cell .ys-status{flex:1; text-align:right; font-family:'Segoe UI',Arial,sans-serif; font-weight:600; font-size:11px;}
-  .ysum-tip{
-    position:fixed; z-index:100; pointer-events:none;
-    background:var(--panel); border:1px solid var(--line); border-radius:8px;
-    padding:9px 11px; box-shadow:0 6px 20px rgba(0,0,0,.4);
-    font:11px/1.4 'Segoe UI',Arial,sans-serif;
+  .ysum-cell .ys-status{flex:1; font-family:'Segoe UI',Arial,sans-serif; font-weight:600; font-size:11px;}
+  .ysum-cell .ys-tot{color:var(--subtext); width:54px; text-align:right;}
+  .ys-body{padding:4px 10px 9px; border-top:1px solid var(--line);}
+  .ys-body .ys-bsub{color:var(--subtext); font-size:10px; margin:3px 0 5px;}
+  .yt-table{border-collapse:collapse; font:11px/1.5 Consolas,Menlo,monospace;}
+  .yt-lbl{color:var(--text); padding:1px 12px 1px 0; white-space:nowrap;}
+  .yt-dot{display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:6px; vertical-align:middle;}
+  .yt-val{text-align:right; padding:1px 8px 1px 0; font-weight:700; color:var(--text);}
+  .yt-st{color:var(--subtext); font-size:10px;}
+
+  /* Selected-player panel (click a bar segment) */
+  .player-panel{
+    position:fixed; z-index:120; min-width:210px; max-width:280px;
+    background:var(--panel); border:1px solid var(--line); border-radius:9px;
+    padding:11px 12px; box-shadow:0 8px 26px rgba(0,0,0,.45);
+    font:12px/1.4 'Segoe UI',Arial,sans-serif;
   }
-  .ysum-tip .yt-head{color:var(--text); font-weight:700; font-size:11px; margin-bottom:6px;
-    padding-bottom:5px; border-bottom:1px solid var(--line);}
-  .ysum-tip .yt-table{border-collapse:collapse; font:11px/1.5 Consolas,Menlo,monospace;}
-  .ysum-tip .yt-lbl{color:var(--text); padding:1px 12px 1px 0; white-space:nowrap;}
-  .ysum-tip .yt-dot{display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:6px; vertical-align:middle;}
-  .ysum-tip .yt-val{text-align:right; padding:1px 8px 1px 0; font-weight:700; color:var(--text);}
-  .ysum-tip .yt-st{color:var(--subtext); font-size:10px;}
+  .player-panel .pp-head{display:flex; align-items:center; justify-content:space-between; gap:8px;}
+  .player-panel .pp-name{font-weight:700; font-size:13px; color:var(--text);}
+  .player-panel .pp-close{background:none; border:none; color:var(--subtext); font-size:13px; cursor:pointer; padding:0 2px;}
+  .player-panel .pp-close:hover{color:var(--text);}
+  .player-panel .pp-sub{color:var(--subtext); font-size:11px; margin-top:2px;}
+  .player-panel .pp-table{width:100%; border-collapse:collapse; margin:8px 0 4px;
+    font:11.5px/1.6 Consolas,Menlo,monospace;}
+  .player-panel .pp-yr{color:var(--subtext); padding-right:10px;}
+  .player-panel .pp-sal{color:var(--text); text-align:right; padding-right:10px; font-weight:600;}
+  .player-panel .pp-pct{color:var(--subtext); text-align:right; padding-right:10px; font-size:10.5px;}
+  .player-panel .pp-opt{color:var(--accent); font-size:10px;}
+  .player-panel .pp-total{color:var(--subtext); font-size:11px; padding-top:5px; border-top:1px solid var(--line);}
+  .player-panel .pp-actions{display:flex; gap:8px; margin-top:10px;}
+  .player-panel .pp-btn{flex:1; padding:6px 0; font-size:12px; font-weight:600; border-radius:6px;
+    border:1px solid var(--line); cursor:pointer; background:var(--card); color:var(--text);}
+  .player-panel .pp-extend{color:var(--blue); border-color:var(--blue);}
+  .player-panel .pp-extend:hover{background:var(--blue); color:#fff;}
+  .player-panel .pp-remove{color:var(--red); border-color:var(--red);}
+  .player-panel .pp-remove:hover{background:var(--red); color:#fff;}
 
   dialog{
     background:var(--panel); color:var(--text); border:1px solid #3a3a3a;
@@ -306,25 +442,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <div id="totals"></div>
 
     <div class="section-h collapsible" id="optHeader">
-      <div class="left"><span class="chev">▼</span> OPTIONS</div>
+      <div class="left"><span class="chev">▼</span> ROSTER</div>
       <span class="count" id="optCount"></span>
     </div>
-    <div class="collapse-body" id="optionsBody"><div id="optionsList"></div></div>
-
-    <div class="section-h" style="color:var(--blue)">
-      <div class="left">EXTENSIONS</div>
-      <button class="plus-btn" id="addExtBtn" title="Add extension" aria-label="Add extension">+</button></div>
-    <div id="extList"></div>
-
-    <div class="section-h" style="color:var(--green)">
-      <div class="left">ADD PLAYER</div>
-      <button class="plus-btn" id="addPlayerBtn" title="Add player" aria-label="Add player">+</button></div>
-    <div id="addPlayerList"></div>
-
-    <div class="section-h" style="color:var(--red)">
-      <div class="left">REMOVE PLAYER</div>
-      <button class="plus-btn" id="addTradeBtn" title="Remove player" aria-label="Remove player">+</button></div>
-    <div id="tradeList"></div>
+    <div class="collapse-body" id="optionsBody"><div id="rosterList"></div></div>
   </div>
   <div id="chartwrap"><canvas id="chart"></canvas></div>
 </div>
@@ -532,10 +653,19 @@ class RosterState{
   }
   isDeclined(n,y){return this.optionStates.get(this.key(n,y))==="declined";}
   isAccepted(n,y){return this.optionStates.get(this.key(n,y))==="accepted";}
+  hasPendingOption(name){
+    return this.optionsFound.concat([...this.extensionOptions].map(k=>{const [n,y]=k.split("|"); return [n,y];}))
+      .some(([n,y])=>n===name && !this.isYearRemoved(n,y)
+        && this.optionStates.get(this.key(n,y))==="pending");
+  }
   expiringContracts(){
     const last=this.yearCols[this.yearCols.length-1],out=[];
     for(const p of this.active){const name=p["Player"];
-      const filled=this.yearCols.filter(yc=>(parseSalary(p[yc])&&!this.isDeclined(name,yc))||this.extensions.has(this.key(name,yc)));
+      // A player with an unresolved (pending) option can't be extended until the
+      // option is accepted or declined first.
+      if(this.hasPendingOption(name)) continue;
+      const filled=this.yearCols.filter(yc=>!this.isYearRemoved(name,yc) &&
+        ((parseSalary(p[yc])&&!this.isDeclined(name,yc))||this.extensions.has(this.key(name,yc))));
       if(!filled.length) continue;
       const lastYr=filled[filled.length-1];
       if(lastYr!==last){const sal=parseSalary(p[lastYr])??this.extensions.get(this.key(name,lastYr))??0; out.push([name,lastYr,sal]);}
@@ -543,6 +673,12 @@ class RosterState{
     out.sort((a,b)=>this.yearCols.indexOf(a[1])-this.yearCols.indexOf(b[1])); return out;
   }
   addExtension(name,year,salary,isOption,label){
+    // If a removal cutoff would hide this new season, lift it (extending past a
+    // removed tail brings the player back on the books from here on).
+    if(this.traded.has(name) &&
+       this.yearCols.indexOf(year) >= this.yearCols.indexOf(this.traded.get(name))){
+      this.traded.delete(name);
+    }
     this.extensions.set(this.key(name,year),salary);
     this.extensionLabels.set(this.key(name,year),label);
     if(isOption){
@@ -555,6 +691,24 @@ class RosterState{
     for(const k of [...this.extensions.keys()]) if(k.startsWith(name+"|")){
       this.extensions.delete(k); this.extensionLabels.delete(k); this.extensionOptions.delete(k);}
   }
+  // Peel a single extension season (and any extension seasons after it, so the
+  // contract stays contiguous) — used by the red × remove-mode on extension years.
+  removeExtensionYear(name, yr){
+    const cut=this.yearCols.indexOf(yr);
+    const p=this.active.find(q=>q["Player"]===name);
+    for(const k of [...this.extensions.keys()]){
+      if(!k.startsWith(name+"|")) continue;
+      const y=k.split("|")[1];
+      if(this.yearCols.indexOf(y) >= cut){
+        this.extensions.delete(k); this.extensionLabels.delete(k); this.extensionOptions.delete(k);
+        // Only clear the option state if it belonged to the EXTENSION. If a CSV
+        // option also lives at this season (e.g. a declined option that an
+        // extension was layered onto), keep its accepted/declined state so the
+        // crossed-out option year is restored intact.
+        if(!(p && this.determineOption(p,y))) this.optionStates.delete(k);
+      }
+    }
+  }
   rosterOnBooks(){const out=[];
     for(const p of this.active){const name=p["Player"];
       const yrs=this.yearCols.filter(yc=>(parseSalary(p[yc])&&!this.isDeclined(name,yc))||this.extensions.has(this.key(name,yc)));
@@ -562,6 +716,29 @@ class RosterState{
     out.sort((a,b)=>this.yearCols.indexOf(a[1][a[1].length-1])-this.yearCols.indexOf(b[1][b[1].length-1])); return out;
   }
   trade(n,y){this.traded.set(n,y);} undoTrade(n){this.traded.delete(n);}
+  // Revert a single player to their original contract: clear option decisions,
+  // extensions, and trade cutoffs for this player. Acquired players are removed
+  // entirely (their "original" state is not being on this roster). Any
+  // CSV-detected option years reset to pending.
+  revertPlayer(name){
+    if(this.isAddedPlayer(name)){ this.removeAddedPlayer(name); return; }
+    for(const k of [...this.optionStates.keys()]) if(k.startsWith(name+"|")) this.optionStates.delete(k);
+    this.removeExtensionsFor(name);
+    this.traded.delete(name);
+    this.refreshOptions();
+    for(const [n,y] of this.optionsFound) if(n===name) this.optionStates.set(this.key(n,y),"pending");
+  }
+  // Has the user made any change to this player vs their original contract?
+  playerHasMoves(name){
+    if(this.isAddedPlayer(name)) return true;
+    if(this.traded.has(name)) return true;
+    if([...this.extensions.keys()].some(k=>k.startsWith(name+"|"))) return true;
+    // any option year resolved away from "pending"?
+    for(const [n,y] of this.optionsFound)
+      if(n===name && this.optionStates.get(this.key(n,y))!=="pending"
+         && this.optionStates.has(this.key(n,y))) return true;
+    return false;
+  }
   isYearRemoved(name,yc){
     return this.traded.has(name) &&
       this.yearCols.indexOf(yc) >= this.yearCols.indexOf(this.traded.get(name));
@@ -650,6 +827,54 @@ class RosterState{
     this.extensions.clear(); this.extensionOptions.clear(); this.extensionLabels.clear(); this.traded.clear();
     this.refreshOptions();
     for(const [n,y] of this.optionsFound) this.optionStates.set(this.key(n,y),"pending");
+  }
+  // Total guaranteed money for a player = sum of their non-option salaries that
+  // remain on the books (respecting declines, trades, and extensions).
+  playerGuaranteed(p){
+    const name=p["Player"]; let g=0;
+    for(const yc of this.yearCols){
+      if(this.isYearRemoved(name,yc)) continue;
+      const csv=parseSalary(p[yc]);
+      const ext=this.extensions.get(this.key(name,yc));
+      let sal,isOpt;
+      if(this.isDeclined(name,yc)){ sal=(ext!=null&&!this.extensionOptions.has(this.key(name,yc)))?ext:null; isOpt=false; }
+      else { sal=csv??ext??null;
+             isOpt=(csv==null&&ext!=null)?this.extensionOptions.has(this.key(name,yc))
+                                          :(this.determineOption(p,yc)&&!this.isAccepted(name,yc)); }
+      if(sal && !isOpt) g+=sal;
+    }
+    return g;
+  }
+  // All active players (base + acquired) sorted by guaranteed total, high→low.
+  rosterSorted(){
+    return this.active.slice().sort((a,b)=>this.playerGuaranteed(b)-this.playerGuaranteed(a));
+  }
+  // Per-year contract rows for a player (used by the roster list + click panel).
+  // A declined CSV option year is kept as a row (declined:true) — it isn't
+  // removed outright, so its Accept/Decline control stays reachable and the user
+  // can re-accept later. Such a row contributes nothing to payroll.
+  contractRows(name){
+    const p=this.active.find(q=>q["Player"]===name); if(!p) return [];
+    const rows=[];
+    for(const yc of this.yearCols){
+      if(this.isYearRemoved(name,yc)) continue;
+      const csv=parseSalary(p[yc]); const ext=this.extensions.get(this.key(name,yc));
+      const isExtOpt=this.extensionOptions.has(this.key(name,yc));
+      if(this.isDeclined(name,yc)){
+        // A declined option year is never removed outright — its original CSV
+        // figure stays visible as a crossed-out row so it can be re-accepted (or
+        // simply seen). If an extension was signed for that same season, that
+        // extension shows as its OWN row right after, on the books.
+        if(csv!=null) rows.push({yc,sal:csv,opt:true,fromExt:false,declined:true});
+        if(ext!=null) rows.push({yc,sal:ext,opt:isExtOpt,fromExt:true,declined:false});
+        continue;
+      }
+      let sal=csv??ext??null; const fromExt=csv==null&&ext!=null;
+      if(sal==null) continue;
+      const opt=fromExt?isExtOpt:(this.determineOption(p,yc)&&!this.isAccepted(name,yc));
+      rows.push({yc,sal,opt,fromExt,declined:false});
+    }
+    return rows;
   }
   summarySections(){
     const acc=[],pen=[],dec=[];
@@ -802,13 +1027,28 @@ function renderChart(ctx,state,x0,y0,W,H,s){
 
   // bars
   const hatch=ctx.createPattern(makeHatch(s),"repeat");
+  // Highlight = the set of expanded player panels (kept in sync both ways).
+  const selSet = (typeof highlightedPlayers!=='undefined' && highlightedPlayers) ? highlightedPlayers : null;
+  const anySel = selSet && selSet.size>0;
   years.forEach((yc,i)=>{let bottom=0; const cx=X(i);
     for(const [name,sal,isOpt] of data.get(yc)){
       const top=Y((bottom+sal)/1e6), h=Y(bottom/1e6)-top, x=cx-barW/2;
+      const isSel = anySel && selSet.has(name);
+      const dim = anySel && !isSel;
+      ctx.save();
+      if(dim) ctx.globalAlpha=0.28;
       ctx.fillStyle=THEME.bar; ctx.fillRect(x,top,barW,h);
       if(isOpt){ctx.fillStyle=hatch; ctx.fillRect(x,top,barW,h);}
       // separator line at top of segment
       ctx.fillStyle=THEME.sep; ctx.fillRect(x,top-0.6*s,barW,1.2*s);
+      ctx.restore();
+      // highlight outline on each highlighted player's segments
+      if(isSel){
+        ctx.save();
+        ctx.strokeStyle=THEME.name; ctx.lineWidth=2.4*s;
+        ctx.strokeRect(x+ctx.lineWidth/2, top+ctx.lineWidth/2, barW-ctx.lineWidth, h-ctx.lineWidth);
+        ctx.restore();
+      }
       bottom+=sal;
     }
     // x label (centered under the bar)
@@ -820,7 +1060,10 @@ function renderChart(ctx,state,x0,y0,W,H,s){
   years.forEach((yc,i)=>{let bottom=0; const cx=X(i);
     for(const [name,sal] of data.get(yc)){
       const top=Y((bottom+sal)/1e6), h=Y(bottom/1e6)-top;
+      const dim = anySel && !selSet.has(name);
+      if(dim) ctx.save(), ctx.globalAlpha=0.30;
       fitLabel(ctx,name,cx,top,h,barW);
+      if(dim) ctx.restore();
       bottom+=sal;}
   });
 
@@ -835,174 +1078,178 @@ function renderChart(ctx,state,x0,y0,W,H,s){
   ctx.textAlign="left"; ctx.textBaseline="middle";
   ctx.fillText("Option / Non-Guaranteed",lx+27*s,ly+lh/2);
 
-  // Interactive Hover Tooltip Render
+  // Interactive Hover Tooltip Render — player name only
   if (typeof activeTooltip !== 'undefined' && activeTooltip) {
     const t = activeTooltip;
     ctx.save();
-    
-    // Calculate Cap Percentage dynamically using the THRESHOLDS lookup
-    const yrInt = parseInt(t.year);
-    const cap = THRESHOLDS[yrInt] ? THRESHOLDS[yrInt][0] : null;
-    let pctStr = "";
-    if (cap) {
-      const pct = ((t.salary / 1e6) / cap) * 100;
-      pctStr = ` (${pct.toFixed(1)}% of cap)`;
-    }
-    
     ctx.font = `bold ${12.5 * t.s}px ${BODYF}`;
     const txt1 = t.name;
-    const txt2 = `${t.year}: $${(t.salary / 1e6).toFixed(2)}M${pctStr}`;
-    const w1 = ctx.measureText(txt1).width;
-    ctx.font = `${11.5 * t.s}px ${BODYF}`;
-    const w2 = ctx.measureText(txt2).width;
-    const boxW = Math.max(w1, w2) + 16 * t.s;
-    const boxH = 44 * t.s;
-    
+    const boxW = ctx.measureText(txt1).width + 16 * t.s;
+    const boxH = 26 * t.s;
+
     let tX = t.mx + 12 * t.s;
     let tY = t.my + 12 * t.s;
     if (tX + boxW > W) tX = t.mx - boxW - 12 * t.s;
     if (tY + boxH > H) tY = t.my - boxH - 12 * t.s;
-    
+
     ctx.fillStyle = THEME.tipBg;
     ctx.strokeStyle = THEME.tipLine;
     ctx.lineWidth = 1 * t.s;
     ctx.fillRect(tX, tY, boxW, boxH);
     ctx.strokeRect(tX, tY, boxW, boxH);
-    
+
     ctx.fillStyle = THEME.text;
-    ctx.textAlign = "left"; ctx.textBaseline = "top";
+    ctx.textAlign = "left"; ctx.textBaseline = "middle";
     ctx.font = `bold ${12.5 * t.s}px ${BODYF}`;
-    ctx.fillText(txt1, tX + 8 * t.s, tY + 6 * t.s);
-    ctx.font = `${11.5 * t.s}px ${BODYF}`;
-    ctx.fillStyle = THEME.accent;
-    ctx.fillText(txt2, tX + 8 * t.s, tY + 24 * t.s);
+    ctx.fillText(txt1, tX + 8 * t.s, tY + boxH/2);
     ctx.restore();
   }
 
   ctx.restore();
 }
 
-/* ════ PNG EXPORT ════ */
+/* ════ PNG EXPORT (yearly summary + roster left · chart center · changes right) ════ */
 function exportPNG(state){
   refreshTheme();
   const TX=THEME.text, SUB=THEME.sub;
   const SC=2.5;
   const years=state.displayYears().filter(y=>state.chartData().has(y));
-  const chartW=Math.max(1200,years.length*220)*SC, chartH=1100*SC;
+  const chartW=Math.max(1100,years.length*210)*SC, chartH=1200*SC;
   const MONO="Consolas,Menlo,monospace";
-  const {acc,pen,dec,exts,added,trades}=state.summarySections();
-  const ROSTER_MAX=15;
+  const PAD=28*SC;
 
-  // Build a flat list of render items. Each item: {text,color,size,bold,cols?}
-  // cols (optional) = array of {text,color,w} for aligned table rows.
-  const items=[];
-  const H=(t,c)=>items.push({text:t,color:c||TX,size:15,bold:true});
-  const SUBH=(t)=>items.push({text:t,color:SUB,size:10,bold:true});
-  const LINE=(t,c)=>items.push({text:t,color:c||TX,size:11,bold:false});
-  const GAP=()=>items.push({text:"",color:TX,size:8,bold:false});
-  const ROW=(cols)=>items.push({cols});
+  // ---- helper to draw a column of items, returns the max text width used ----
+  function measure(items){
+    const m=document.createElement("canvas").getContext("2d"); let w=0;
+    for(const it of items){
+      if(it.cols){ w=Math.max(w, it.cols.reduce((a,c)=>a+c.w,0)*SC); }
+      else { m.font=`${it.bold?"bold ":""}${it.size*SC}px ${MONO}`; w=Math.max(w,m.measureText(it.text).width); }
+    }
+    return w;
+  }
+  function drawItems(ctx,items,x0,y0){
+    let y=y0; ctx.textAlign="left"; ctx.textBaseline="top";
+    for(const it of items){
+      if(it.cols){
+        let cx=x0; ctx.font=`${(it.size||11.5)*SC}px ${MONO}`;
+        for(const col of it.cols){ ctx.fillStyle=col.color; ctx.fillText(col.text,cx,y); cx+=col.w*SC; }
+        y+=(it.size||11.5)*1.7*SC;
+      }else{
+        ctx.font=`${it.bold?"bold ":""}${it.size*SC}px ${MONO}`;
+        ctx.fillStyle=it.color; ctx.fillText(it.text,x0,y);
+        y+=(it.bold?it.size*1.85:it.size*1.5)*SC;
+      }
+    }
+    return y;
+  }
+  const H=(arr,t,c)=>arr.push({text:t,color:c||TX,size:14,bold:true});
+  const SUBH=(arr,t,c)=>arr.push({text:t,color:c||SUB,size:11,bold:true});
+  const LINE=(arr,t,c)=>arr.push({text:t,color:c||TX,size:11,bold:false});
+  const GAP=(arr)=>arr.push({text:"",color:TX,size:7,bold:false});
+  const ROW=(arr,cols,size)=>arr.push({cols,size});
 
-  // ── Yearly summary table ───────────────────────────────────────────
-  // status name maps to which breakdown line is the "active" margin
-  const statusRef={"2nd Apron":"2nd Apron","1st Apron":"1st Apron",
-    "Above Tax":"Luxury Tax","Below Tax":"Salary Cap","Below Cap":"Salary Cap",
-    "Below Floor":"Salary Floor"};
-  H("YEARLY SUMMARY");
-  ROW([{text:"SEASON",color:SUB,w:62},{text:"PAYROLL",color:SUB,w:74},
-       {text:"STATUS",color:SUB,w:110},{text:"MARGIN",color:SUB,w:74},{text:"ROSTER",color:SUB,w:60}]);
+  // contiguous-year span helper → "2025-26 – 2028-29" or "2025-26"
+  const yspan=yrs=>{
+    if(!yrs.length) return "";
+    return yrs.length>1 ? `${yrs[0]} – ${yrs[yrs.length-1]}` : yrs[0];
+  };
+
+  // ---- LEFT: condensed yearly summary, then condensed roster ----
+  const left=[];
+  H(left,"YEARLY SUMMARY");
   for(const r of state.yearlySummary()){
-    let margin="—";
-    if(r.breakdown){
-      const refLbl=statusRef[r.status];
-      const b=r.breakdown.find(x=>x.label===refLbl);
-      if(b) margin=`${b.value>=0?"+":""}${b.value.toFixed(1)}M`;
-    }
-    ROW([
-      {text:r.yc,color:TX,w:62},
-      {text:`$${r.total.toFixed(1)}M`,color:TX,w:74},
-      {text:r.status,color:STATUS_COLOR[r.status]||SUB,w:110},
-      {text:margin,color:SUB,w:74},
-      {text:`${r.players}/${ROSTER_MAX}`,color:SUB,w:60},
-    ]);
+    GAP(left);
+    ROW(left,[{text:r.yc,color:TX,w:60},
+              {text:r.status,color:STATUS_COLOR[r.status]||SUB,w:96},
+              {text:`$${r.total.toFixed(0)}M`,color:TX,w:64},
+              {text:`${r.players}/15`,color:SUB,w:50}]);
+  }
+  GAP(left); GAP(left);
+  H(left,"ROSTER");
+  for(const p of state.rosterSorted()){
+    const name=p["Player"]; const rows=state.contractRows(name);
+    if(!rows.length) continue;
+    let guarTot=0,optTot=0;
+    const guarYrs=[], optYrs=[];
+    for(const r of rows){ if(r.opt){optTot+=r.sal; optYrs.push(r.yc);} else {guarTot+=r.sal; guarYrs.push(r.yc);} }
+    // contract total: guaranteed, with option money appended via "+"
+    let tot=`$${(guarTot/1e6).toFixed(0)}M`; if(optTot>0) tot+=` +$${(optTot/1e6).toFixed(0)}M`;
+    // years under contract: guaranteed span, plus option years tagged with "+"
+    let yrsTxt=yspan(guarYrs);
+    if(optYrs.length){ yrsTxt += (yrsTxt?"  ":"") + optYrs.map(y=>"+"+y).join(" "); }
+    const from=state.addedFrom.get(name), traded=state.traded.get(name);
+    const tag=from?" ‹from "+from+"›":(traded?" ‹removed›":"");
+    GAP(left);
+    ROW(left,[{text:name+tag,color:TX,w:230},{text:tot,color:SUB,w:96}]);
+    ROW(left,[{text:"  "+yrsTxt,color:SUB,w:326}],10);
   }
 
-  // ── Moves (only sections where something was actively done) ────────
-  // Pending options are the default state, not a move — only count decisions.
-  const hasOpt=acc.length+dec.length>0;
-  const anyMoves=hasOpt||exts.length||added.length||trades.length;
-  GAP(); H("ROSTER MOVES");
-  if(!anyMoves){
-    LINE("  No moves made.",SUB);
-  }else{
-    if(hasOpt){
-      GAP(); H("Options",TX);
-      if(acc.length){SUBH("  Accepted");
-        acc.forEach(([n,y,s])=>LINE(`  \u2713 ${n} ${y} ($${(s/1e6).toFixed(1)}M)`,GREEN));}
-      if(dec.length){SUBH("  Declined");
-        dec.forEach(([n,y,s])=>LINE(`  \u2717 ${n} ${y} ($${(s/1e6).toFixed(1)}M)`,RED));}
+  // ---- RIGHT: roster CHANGES only (acquired · removed · extensions) ----
+  const {exts,added,trades}=state.summarySections();
+  const right=[];
+  H(right,"ROSTER CHANGES");
+  const anyChange = added.length || trades.length || exts.length;
+  if(!anyChange){ GAP(right); LINE(right,"No changes yet.",SUB); }
+
+  if(added.length){
+    GAP(right); SUBH(right,"ACQUIRED",THEME.green||SUB);
+    for(const a of added){
+      const span=yspan(a.rows.map(r=>r.yc));
+      GAP(right);
+      ROW(right,[{text:a.name,color:TX,w:200},
+                 {text:`$${(a.total/1e6).toFixed(0)}M`,color:SUB,w:80}]);
+      ROW(right,[{text:`  from ${a.from} · ${span}`,color:SUB,w:300}],10);
     }
-    if(exts.length){
-      GAP(); H("Extensions",BLUE);
-      exts.forEach(([n,y,s,o])=>LINE(`  \u2713 ${n} ${y} ($${(s/1e6).toFixed(1)}M)${o?" (option)":""}`,BLUE));
+  }
+  if(trades.length){
+    GAP(right); SUBH(right,"REMOVED",THEME.accent||SUB);
+    for(const t of trades){
+      const off=t.rows.reduce((s,r)=>s+r.sal,0);
+      GAP(right);
+      ROW(right,[{text:t.name,color:TX,w:200},
+                 {text:`-$${(off/1e6).toFixed(0)}M`,color:SUB,w:80}]);
+      ROW(right,[{text:`  from ${t.fromYr} onward`,color:SUB,w:300}],10);
     }
-    if(added.length){
-      GAP(); H("Added Players",GREEN);
-      added.forEach(a=>{
-        LINE(`  + ${a.name} from ${a.from} ($${(a.total/1e6).toFixed(1)}M)`,GREEN);
-        a.rows.forEach(r=>LINE(`      ${r.yc}  $${(r.sal/1e6).toFixed(1)}M${r.opt?" (option)":""}`,SUB));
-      });
-    }
-    if(trades.length){
-      GAP(); H("Removed Players",RED);
-      trades.forEach(t=>{
-        LINE(`  \u2717 ${t.name} from ${t.fromYr} onward`,RED);
-        t.rows.forEach(r=>LINE(`      ${r.yc}  \u2212$${(r.sal/1e6).toFixed(1)}M`,SUB));
-      });
+  }
+  if(exts.length){
+    GAP(right); SUBH(right,"EXTENSIONS",THEME.accent||SUB);
+    // group extension rows by player
+    const byName=new Map();
+    for(const [n,y,s,isOpt] of exts){ if(!byName.has(n)) byName.set(n,[]); byName.get(n).push([y,s,isOpt]); }
+    for(const [n,list] of byName){
+      list.sort((a,b)=>state.yearCols.indexOf(a[0])-state.yearCols.indexOf(b[0]));
+      const tot=list.reduce((s,r)=>s+r[1],0);
+      GAP(right);
+      ROW(right,[{text:n,color:TX,w:200},
+                 {text:`+$${(tot/1e6).toFixed(0)}M`,color:SUB,w:80}]);
+      for(const [y,s,isOpt] of list){
+        const cap=THRESHOLDS[parseInt(y)]?THRESHOLDS[parseInt(y)][0]:null;
+        const pct=cap?`${((s/1e6)/cap*100).toFixed(0)}%`:"";
+        ROW(right,[{text:"  "+y,color:SUB,w:64},
+                   {text:`$${(s/1e6).toFixed(1)}M`,color:TX,w:70},
+                   {text:pct,color:SUB,w:44},
+                   {text:isOpt?"option":"",color:THEME.accent,w:60}],10);
+      }
     }
   }
 
-  // ── Measure width ──────────────────────────────────────────────────
-  const meas=document.createElement("canvas").getContext("2d");
-  let maxW=0;
-  for(const it of items){
-    if(it.cols){
-      const w=it.cols.reduce((a,c)=>a+c.w,0);
-      maxW=Math.max(maxW,w*SC);
-    }else{
-      meas.font=`${it.bold?"bold ":""}${it.size*SC}px ${MONO}`;
-      maxW=Math.max(maxW,meas.measureText(it.text).width);
-    }
-  }
-  const sumW=maxW+70*SC;
-
-  const c=document.createElement("canvas"); c.width=chartW+sumW; c.height=chartH;
+  const leftW=measure(left)+PAD*2;
+  const rightW=Math.max(measure(right)+PAD*2, 300*SC);
+  const c=document.createElement("canvas"); c.width=leftW+chartW+rightW; c.height=chartH;
   const ctx=c.getContext("2d");
   ctx.fillStyle=THEME.bg; ctx.fillRect(0,0,c.width,c.height);
-  renderChart(ctx,state,0,0,chartW,chartH,SC);
 
-  // divider line between chart and summary
+  // chart in the centre
+  renderChart(ctx,state,leftW,0,chartW,chartH,SC);
+
+  // dividers
   ctx.strokeStyle=THEME.legendLine; ctx.lineWidth=1*SC;
-  ctx.beginPath(); ctx.moveTo(chartW+12*SC,40*SC); ctx.lineTo(chartW+12*SC,chartH-40*SC); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(leftW,40*SC); ctx.lineTo(leftW,chartH-40*SC); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(leftW+chartW,40*SC); ctx.lineTo(leftW+chartW,chartH-40*SC); ctx.stroke();
 
-  const x0=chartW+30*SC;
-  let y=46*SC; ctx.textAlign="left"; ctx.textBaseline="top";
-  for(const it of items){
-    if(it.cols){
-      let cx=x0;
-      ctx.font=`${12*SC}px ${MONO}`;
-      for(const col of it.cols){
-        ctx.fillStyle=col.color;
-        ctx.fillText(col.text, cx, y);
-        cx+=col.w*SC;
-      }
-      y+=12*1.7*SC;
-    }else{
-      ctx.font=`${it.bold?"bold ":""}${it.size*SC}px ${MONO}`;
-      ctx.fillStyle=it.color;
-      ctx.fillText(it.text, x0, y);
-      y+=(it.bold?it.size*1.9:it.size*1.5)*SC;
-    }
-  }
+  drawItems(ctx,left,PAD,46*SC);
+  drawItems(ctx,right,leftW+chartW+PAD,46*SC);
+
   c.toBlob(blob=>{const a=document.createElement("a");
     a.href=URL.createObjectURL(blob); a.download=`${state.teamName}_salaries.png`; a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),5000);},"image/png");
@@ -1016,6 +1263,13 @@ const $=id=>document.getElementById(id);
 const canvas=$("chart"), cctx=canvas.getContext("2d");
 const fmtM=v=>`$${(v/1e6).toFixed(2)}M`;
 let optionsCollapsed=false;
+let expandedPlayers=new Set();
+// The chart highlight set is exactly the set of expanded player panels.
+// They are one and the same, so highlighting and panels always match.
+let highlightedPlayers=expandedPlayers;
+let expandedYears=new Set();
+let removeMode=new Set();   // player names whose "remove seasons" mode is active
+let inlineForm=null;   // {name, mode:"extend"|"remove"} — open form inside a player card
 
 function redrawChart(){
   if(!ST) return;
@@ -1031,152 +1285,345 @@ function refreshTotals(){
   for(const r of ST.yearlySummary()){
     const lineClr=STATUS_COLOR[r.status]||SUBTEXT;
     const rgb=STATUS_RGB[r.status]||"138,138,138";
-    const cell=document.createElement("div"); cell.className="ysum-cell";
-    // background tint matches the chart region (same 0.10 alpha); a subtle
-    // left border in the line colour reinforces the link.
+    const expanded=expandedYears.has(r.yc);
+    const cell=document.createElement("div"); cell.className="ysum-cell"+(expanded?" open":"");
     cell.style.background=`rgba(${rgb},0.10)`;
     cell.style.borderColor=`rgba(${rgb},0.45)`;
-    cell.innerHTML=`<span class="ys-yr">${r.yc}</span>
-      <span class="ys-tot">$${r.total.toFixed(0)}M</span>
-      <span class="ys-status" style="color:${lineClr}">${r.status}</span>`;
-    // hover tooltip with the full breakdown
-    cell.onmouseenter=(e)=>showYsumTip(r,cell);
-    cell.onmouseleave=hideYsumTip;
+    const head=document.createElement("div"); head.className="ys-head";
+    head.innerHTML=`<span class="ys-chev">▸</span>
+      <span class="ys-yr">${r.yc}</span>
+      <span class="ys-status" style="color:${lineClr}">${r.status}</span>
+      <span class="ys-tot">$${r.total.toFixed(0)}M</span>`;
+    head.onclick=()=>{ if(expandedYears.has(r.yc)) expandedYears.delete(r.yc); else expandedYears.add(r.yc); refreshTotals(); };
+    cell.appendChild(head);
+    if(expanded && r.breakdown){
+      const body=document.createElement("div"); body.className="ys-body";
+      let rows=`<div class="ys-bsub">${r.players}/15 players</div><table class="yt-table"><tbody>`;
+      for(const b of r.breakdown){
+        const over=b.value>=0, sign=over?"+":"", dot=tierLineColor(b.label);
+        rows+=`<tr><td class="yt-lbl"><span class="yt-dot" style="background:${dot}"></span>${b.label}</td>`+
+              `<td class="yt-val">${sign}${b.value.toFixed(1)}M</td>`+
+              `<td class="yt-st">${over?"over":"under"}</td></tr>`;
+      }
+      rows+=`</tbody></table>`;
+      body.innerHTML=rows;
+      cell.appendChild(body);
+    }
     box.appendChild(cell);
   }
   if(!box.children.length) box.innerHTML='<div class="muted">No data.</div>';
 }
-
-let ysumTipEl=null;
-function hideYsumTip(){ if(ysumTipEl){ysumTipEl.remove(); ysumTipEl=null;} }
 function tierLineColor(label){
   const t=TIERS.find(x=>x.key===label); return t?t.line:"#8A8A8A";
-}
-function showYsumTip(r,anchor){
-  hideYsumTip();
-  if(!r.breakdown) return;
-  const tip=document.createElement("div"); tip.className="ysum-tip";
-  let rows=`<div class="yt-head">${r.yc} · $${r.total.toFixed(1)}M · ${r.players}/15 players</div>`;
-  rows+=`<table class="yt-table"><tbody>`;
-  for(const b of r.breakdown){
-    const over=b.value>=0;
-    const sign = over ? "+" : "";
-    const dot=tierLineColor(b.label);
-    rows+=`<tr>`+
-          `<td class="yt-lbl"><span class="yt-dot" style="background:${dot}"></span>${b.label}</td>`+
-          `<td class="yt-val">${sign}${b.value.toFixed(1)}M</td>`+
-          `<td class="yt-st">${over?"over":"under"}</td></tr>`;
-  }
-  rows+=`</tbody></table>`;
-  tip.innerHTML=rows;
-  document.body.appendChild(tip);
-  const a=anchor.getBoundingClientRect();
-  tip.style.left=Math.round(a.right+8)+"px";
-  tip.style.top=Math.round(a.top)+"px";
-  // keep on-screen
-  const tb=tip.getBoundingClientRect();
-  if(tb.right>window.innerWidth-8){
-    tip.style.left=Math.round(a.left-tb.width-8)+"px";
-  }
-  if(tb.bottom>window.innerHeight-8){
-    tip.style.top=Math.round(window.innerHeight-tb.height-8)+"px";
-  }
-  ysumTipEl=tip;
 }
 
 function rebuildSidebar(){
   refreshTotals();
-  /* OPTIONS (collapsible) */
-  const visOpts=ST.visibleOptions();
-  $("optCount").textContent=visOpts.length||"0";
+  $("optCount").textContent=ST.active.length||"0";
   $("optHeader").classList.toggle("collapsed",optionsCollapsed);
   $("optionsBody").classList.toggle("collapsed",optionsCollapsed);
-  const ol=$("optionsList"); ol.innerHTML="";
-  if(!visOpts.length) ol.innerHTML='<div class="muted">None detected in this roster.</div>';
-  for(const [name,yc,sal] of visOpts){
-    const cur=ST.optionStates.get(ST.key(name,yc));
-    const card=document.createElement("div"); card.className="card";
-    card.innerHTML=`<div class="row"><span class="name"></span>
-        <span class="meta">${yc} &nbsp; ${fmtM(sal)}</span></div>
-      <div class="seg">
-        <button data-s="pending"  class="${cur==="pending"?"on-pending":""}">~ Pending</button>
-        <button data-s="accepted" class="${cur==="accepted"?"on-accepted":""}">✓ Accept</button>
-        <button data-s="declined" class="${cur==="declined"?"on-declined":""}">✗ Decline</button>
-      </div>`;
-    card.querySelector(".name").textContent=name;
-    card.querySelectorAll(".seg button").forEach(b=>b.onclick=()=>{
-      ST.setOptionState(name,yc,b.dataset.s); rebuildSidebar(); redrawChart();});
-    ol.appendChild(card);
-  }
-  /* EXTENSIONS */
-  const el=$("extList"); el.innerHTML="";
-  const byP=new Map();
-  for(const [k,sal] of ST.extensions){const [n,y]=k.split("|"); if(!byP.has(n))byP.set(n,[]); byP.get(n).push([y,sal]);}
-  if(!byP.size) el.innerHTML='<div class="muted">None.</div>';
-  for(const [name,yrs] of byP){
-    yrs.sort((a,b)=>ST.yearCols.indexOf(a[0])-ST.yearCols.indexOf(b[0]));
-    const card=document.createElement("div"); card.className="card";
-    const head=document.createElement("div"); head.className="row";
-    head.innerHTML=`<span class="name" style="color:var(--blue)"></span><button class="x-btn" title="Remove">✕</button>`;
-    head.querySelector(".name").textContent=name;
-    head.querySelector("button").onclick=()=>{ST.removeExtensionsFor(name); rebuildSidebar(); redrawChart();};
-    card.appendChild(head);
-    for(const [y,sal] of yrs){
-      const opt=ST.extensionOptions.has(ST.key(name,y))?"  (option)":"";
-      const d=document.createElement("div"); d.className="ext-year";
-      d.textContent=`${y}   ${ST.extensionLabels.get(ST.key(name,y))||fmtM(sal)}${opt}`;
-      card.appendChild(d);}
-    el.appendChild(card);
-  }
-  /* ADD PLAYER (acquisitions) */
-  const apl=$("addPlayerList"); apl.innerHTML="";
-  if(!ST.addedPlayers.length) apl.innerHTML='<div class="muted">None.</div>';
-  for(const p of ST.addedPlayers){
-    const name=p["Player"]; const from=ST.addedFrom.get(name)||"";
-    const yrSals=ST.yearCols.map(yc=>[yc,parseSalary(p[yc])]).filter(([,s])=>s);
-    const card=document.createElement("div"); card.className="card";
-    const head=document.createElement("div"); head.className="row";
-    head.innerHTML=`<span class="name" style="color:var(--green)"></span><button class="x-btn" title="Remove acquired player">✕</button>`;
-    head.querySelector(".name").textContent=name;
-    head.querySelector("button").onclick=()=>{ST.removeAddedPlayer(name); rebuildSidebar(); redrawChart();};
-    card.appendChild(head);
-    const src=document.createElement("div"); src.className="ext-year"; src.style.color="var(--subtext)";
-    src.textContent=`from ${from}`;
-    card.appendChild(src);
-    for(const [y,sal] of yrSals){
-      const opt = (ST.determineOption(p,y) || ST.extensionOptions.has(ST.key(name,y))) ? "  (option)" : "";
-      const d=document.createElement("div"); d.className="ext-year";
-      d.textContent=`${y}   ${fmtM(sal)}${opt}`;
-      card.appendChild(d);
+  const rl=$("rosterList"); rl.innerHTML="";
+
+  for(const p of ST.rosterSorted()){
+    const name=p["Player"];
+    const total=ST.playerGuaranteed(p);
+    const from=ST.addedFrom.get(name);
+    const traded=ST.traded.get(name);
+    const expanded=expandedPlayers.has(name);
+
+    const card=document.createElement("div"); card.className="rost-card"+(expanded?" open selected":"");
+    card.dataset.player=name;
+    // header row (click to expand)
+    const head=document.createElement("div"); head.className="rost-head";
+    head.innerHTML=`<span class="rc-chev">▸</span>
+      <span class="rc-name"></span>
+      <span class="rc-total">$${(total/1e6).toFixed(1)}M</span>`;
+    head.querySelector(".rc-name").textContent=name;
+    // Name colour encodes change-state (replaces the old pill tags):
+    //   acquired from another team → green
+    //   has an extension on the books → blue
+    //   has one or more seasons removed from the end → red
+    // Priority when multiple apply: removed > extended > acquired.
+    const hasExtTag=[...ST.extensions.keys()].some(k=>k.startsWith(name+"|"));
+    const nameEl=head.querySelector(".rc-name");
+    if(traded){ nameEl.classList.add("nm-rem"); nameEl.title="Seasons removed from "+traded+" onward"; }
+    else if(hasExtTag){ nameEl.classList.add("nm-ext"); nameEl.title="Extended"; }
+    else if(from){ nameEl.classList.add("nm-added"); nameEl.title="Acquired from "+from; }
+    // revert-to-original button (top right, undo glyph) — only meaningful when expanded
+    if(expanded){
+      const rev=document.createElement("button"); rev.className="rc-revert"; rev.innerHTML="&#8634;";
+      const hasMoves=ST.playerHasMoves(name);
+      rev.title = hasMoves ? "Revert to original contract" : "No changes to revert";
+      rev.disabled=!hasMoves;
+      rev.onclick=(ev)=>{ ev.stopPropagation();
+        ST.revertPlayer(name);
+        if(inlineForm&&inlineForm.name===name) inlineForm=null;
+        removeMode.delete(name);
+        if(ST.isAddedPlayer(name)) expandedPlayers.delete(name);
+        rebuildSidebar(); redrawChart(); };
+      head.appendChild(rev);
+      // remove-seasons (×) toggle, just right of the undo button. When active,
+      // on-books year rows become clickable red boxes that peel off the end.
+      const rmt=document.createElement("button"); rmt.className="rc-rmtoggle"+(removeMode.has(name)?" active":"");
+      rmt.innerHTML="✕";
+      rmt.title=removeMode.has(name)?"Done removing seasons":"Remove seasons (peel from the last year)";
+      rmt.onclick=(ev)=>{ ev.stopPropagation();
+        if(removeMode.has(name)) removeMode.delete(name); else removeMode.add(name);
+        rebuildSidebar(); };
+      head.appendChild(rmt);
     }
-    apl.appendChild(card);
-  }
-  /* REMOVE PLAYER */
-  const tl=$("tradeList"); tl.innerHTML="";
-  if(!ST.traded.size) tl.innerHTML='<div class="muted">None.</div>';
-  for(const [name,fromYr] of ST.traded){
-    const card=document.createElement("div"); card.className="card";
-    const head=document.createElement("div"); head.className="row";
-    head.innerHTML=`<span class="name" style="color:var(--red)">✗ <span></span></span>
-        <span class="meta">from ${fromYr}</span><button class="undo-btn">undo</button></div>`;
-    head.querySelector(".name span").textContent=name;
-    head.querySelector(".undo-btn").onclick=()=>{ST.undoTrade(name); rebuildSidebar(); redrawChart();};
+    head.onclick=()=>{ if(expandedPlayers.has(name)) expandedPlayers.delete(name); else expandedPlayers.add(name); rebuildSidebar(); redrawChart(); };
     card.appendChild(head);
-    // show the salaries coming off the books (from the cutoff year onward)
-    const pl=ST.active.find(q=>q["Player"]===name);
-    if(pl){
-      const fromIdx=ST.yearCols.indexOf(fromYr);
-      for(const yc of ST.yearCols){
-        if(ST.yearCols.indexOf(yc)<fromIdx) continue;
-        const sal=parseSalary(pl[yc])??ST.extensions.get(ST.key(name,yc))??null;
-        if(!sal) continue;
-        const d=document.createElement("div"); d.className="ext-year"; d.style.color="var(--subtext)";
-        d.textContent=`${yc}   −${fmtM(sal)}`;
-        card.appendChild(d);
+
+    if(expanded){
+      const body=document.createElement("div"); body.className="rost-body";
+      const hasExtNow=[...ST.extensions.keys()].some(k=>k.startsWith(name+"|"));
+      // Options freeze once an extension exists OR while the extension form is
+      // open for this player — accepted/declined can't be changed during/after
+      // an extension.
+      const extFormOpenNow = inlineForm && inlineForm.name===name && inlineForm.mode==="extend";
+      const optLocked = hasExtNow || extFormOpenNow;
+      const rows=ST.contractRows(name);
+      const inRemove=removeMode.has(name);
+      // Removable years = any on-books season (CSV or extension), not declined.
+      // Peeling happens from the LAST removable year. Extension years peel by
+      // deleting that extension entry; CSV years peel via a trade cutoff.
+      const removableIdx=rows.map((r,i)=>(!r.declined)?i:-1).filter(i=>i>=0);
+      const lastRemovable=removableIdx.length?removableIdx[removableIdx.length-1]:-1;
+      const myOptYears=new Set(ST.visibleOptions().filter(([n])=>n===name).map(([,y])=>y));
+
+      if(inRemove){
+        const hint=document.createElement("div"); hint.className="rc-rmhint";
+        hint.textContent="Click the last season to remove it. Repeat to peel earlier seasons.";
+        body.appendChild(hint);
       }
+
+      rows.forEach((r,ri)=>{
+        const cap=THRESHOLDS[parseInt(r.yc)]?THRESHOLDS[parseInt(r.yc)][0]:null;
+        const pct=cap?`${((r.sal/1e6)/cap*100).toFixed(1)}%`:"";
+        const d=document.createElement("div"); d.className="rc-year"+(r.declined?" rcy-declined":"");
+        // Fixed-width tag slot keeps the salary/% columns aligned across every
+        // row, regardless of whether this season carries an opt/ext/declined tag.
+        let tag="", tagCls="";
+        if(r.declined){ tag="dec"; tagCls="t-decl"; }
+        else if(r.opt){ tag="opt"; tagCls="t-opt"; }
+        else if(r.fromExt){ tag="ext"; tagCls="t-ext"; }
+        let h=`<span class="rcy-yr">${r.yc}</span><span class="rcy-sal">${fmtM(r.sal)}</span>`+
+              `<span class="rcy-pct">${pct}</span>`+
+              `<span class="rcy-tag ${tagCls}">${tag}</span>`;
+        d.innerHTML=h;
+
+        // ── Remove-mode: turn removable rows into clickable red boxes ──
+        // Only the LAST removable season is actionable; earlier ones show locked.
+        if(inRemove){
+          const isRemovable=!r.declined;
+          const sp=document.createElement("span"); sp.className="rcy-spacer"; d.appendChild(sp);
+          if(isRemovable){
+            d.classList.add("rcy-removable");
+            if(ri===lastRemovable){
+              d.title=`Remove ${r.yc}`;
+              d.onclick=(ev)=>{ev.stopPropagation();
+                if(r.fromExt) ST.removeExtensionYear(name, r.yc);  // peel one extension year
+                else ST.trade(name, r.yc);                         // cut CSV seasons from here on
+                rebuildSidebar(); redrawChart();};
+            }else{
+              d.classList.add("rcy-locked");
+              d.title="Remove the last season first";
+            }
+          }
+          body.appendChild(d);
+          return;   // skip option buttons while peeling seasons
+        }
+
+        // Inline option accept/decline — shown only on the CSV option row (never
+        // on an extension row). It is INTERACTIVE only while the player has no
+        // extension; once an extension is being/has been added, the option's
+        // accepted/declined state is frozen (buttons disabled, current choice
+        // still visible). A declined option year stays here, crossed out.
+        const isOptionRow = myOptYears.has(r.yc) && !r.fromExt;
+        if(isOptionRow){
+          const cur=ST.optionStates.get(ST.key(name,r.yc));
+          const seg=document.createElement("span"); seg.className="rcy-opt-seg";
+          const dis=optLocked?"disabled":"";
+          seg.innerHTML=`<button class="ob ob-acc ${cur==="accepted"?"on-acc":""}" data-s="accepted" ${dis} title="Accept option">Accept</button>`+
+                        `<button class="ob ob-dec ${cur==="declined"?"on-dec":""}" data-s="declined" ${dis} title="Decline option">Decline</button>`;
+          if(!optLocked) seg.querySelectorAll(".ob").forEach(b=>b.onclick=(ev)=>{ev.stopPropagation();
+            const next=(cur===b.dataset.s)?"pending":b.dataset.s;
+            ST.setOptionState(name,r.yc,next); rebuildSidebar(); redrawChart();});
+          d.appendChild(seg);
+        }else{
+          const sp=document.createElement("span"); sp.className="rcy-spacer"; d.appendChild(sp);
+        }
+        body.appendChild(d);
+      });
+
+      // If years were removed via the × control, offer to restore them.
+      if(traded){
+        const ur=document.createElement("div"); ur.className="rc-addyear"; ur.style.borderColor="var(--red)"; ur.style.color="var(--red)";
+        ur.innerHTML=`<span class="ay-plus">&#8634;</span><span>Restore removed seasons (from ${traded})</span>`;
+        ur.onclick=()=>{ST.undoTrade(name); rebuildSidebar(); redrawChart();};
+        body.appendChild(ur);
+      }
+
+      // option lock note when a committed extension is freezing a CSV option
+      const hasCsvOptionRow = rows.some(r=>!r.fromExt && (r.opt||r.declined) && myOptYears.has(r.yc));
+      if(!inRemove && hasExtNow && hasCsvOptionRow){
+        const lk=document.createElement("div"); lk.className="opt-lock"; lk.textContent="option locked — remove the extension to change it";
+        body.appendChild(lk);
+      }
+
+      // ── Add-extension affordance ──
+      // A single inline form stages one OR MORE consecutive years and commits
+      // them together. Extension years are removed the same way as standard
+      // years — via the red × remove-mode — so there's no separate remove button.
+      const canExt=ST.expiringContracts().some(([n])=>n===name);
+      const extFormOpen = inlineForm && inlineForm.name===name && inlineForm.mode==="extend";
+      if(inRemove){
+        /* remove-mode: no extension controls */
+      }else if(extFormOpen){
+        body.appendChild(buildExtendForm(name));
+      }else if(canExt){
+        const ay=document.createElement("div"); ay.className="rc-addyear";
+        const nextYr=extNextYear(name);
+        ay.innerHTML=`<span class="ay-plus">+</span><span>${hasExtNow?`Add year (${nextYr})`:`Add extension (${nextYr})`}</span>`;
+        ay.onclick=()=>{ inlineForm={name,mode:"extend"}; inlineExtRows=[]; rebuildSidebar(); };
+        body.appendChild(ay);
+      }else if(!hasExtNow){
+        const ay=document.createElement("div"); ay.className="rc-addyear disabled";
+        ay.innerHTML=`<span class="ay-plus">+</span><span>${ST.hasPendingOption(name)?"Resolve option to extend":"No season available to extend"}</span>`;
+        body.appendChild(ay);
+      }
+
+      card.appendChild(body);
     }
-    tl.appendChild(card);
+    rl.appendChild(card);
   }
+
+  // blank "add player" item
+  const add=document.createElement("div"); add.className="rost-add";
+  add.innerHTML=`<span class="ra-plus">+</span><span class="ra-label">Add player from another team</span>`;
+  add.onclick=()=>openAddPlayerDialog();
+  rl.appendChild(add);
+}
+
+/* ── Inline extension entry (rendered inside a player card) ──
+   Holds one or more consecutive years that are committed together in a single
+   move. Each entry: {yr, unit:"dollar"|"percent", value:Number, isOpt:Bool}. */
+let inlineExtRows=[];   // working rows for the open extension form
+function capForYearM(yr){const t=THRESHOLDS[parseInt(yr)]; return (t?t[0]:154.647);}
+// The next season available to extend into = the season right after the player's
+// current last contracted year (their expiring year).
+function extNextYear(name){
+  const exp=ST.expiringContracts().find(([n])=>n===name);
+  if(!exp) return null;
+  const i=ST.yearCols.indexOf(exp[1]);
+  return ST.yearCols[i+1]||null;
+}
+// The season following the last year currently staged in the open form (so the
+// form can offer consecutive years without committing first).
+function extFormNextYear(name){
+  const first=extNextYear(name); if(!first) return null;
+  if(!inlineExtRows.length) return first;
+  const lastYr=inlineExtRows[inlineExtRows.length-1].yr;
+  const i=ST.yearCols.indexOf(lastYr);
+  return ST.yearCols[i+1]||null;
+}
+function buildExtendForm(name){
+  const wrap=document.createElement("div"); wrap.className="inline-form";
+  const first=extNextYear(name);
+  if(!first){ wrap.innerHTML='<div class="if-err">No season available to extend into.</div>'; return wrap; }
+
+  // Years already committed as part of this player's extension (across earlier
+  // sessions). The final year of an extension may be an option only when the
+  // extension spans 2+ years total, so these count toward that length.
+  const existingExtCount=[...ST.extensions.keys()].filter(k=>k.startsWith(name+"|")).length;
+
+  // Seed the first staged row if the form just opened.
+  if(!inlineExtRows.length){
+    inlineExtRows=[{yr:first, unit:"dollar", value:NaN, isOpt:false}];
+  }
+
+  const title=document.createElement("div"); title.className="if-title";
+  title.textContent="Add extension";
+  wrap.appendChild(title);
+
+  // Render one editable line per staged year.
+  inlineExtRows.forEach((er,ri)=>{
+    const yr=er.yr;
+    const row=document.createElement("div"); row.className="if-row";
+    row.innerHTML=`<span class="ifr-yr">${yr}</span>
+      <input type="number" step="0.1" min="0" placeholder="0.0">
+      <div class="unit-tog">
+        <button data-u="dollar" class="${er.unit==="dollar"?"on":""}">$M</button>
+        <button data-u="percent" class="${er.unit==="percent"?"on":""}">% cap</button>
+      </div><span class="ifr-calc"></span>`;
+    const inp=row.querySelector("input");
+    const calc=row.querySelector(".ifr-calc");
+    if(!isNaN(er.value)) inp.value=er.value;
+    function upd(){ if(isNaN(er.value)){calc.textContent=""; return;}
+      if(er.unit==="percent") calc.textContent=`= $${(capForYearM(yr)*er.value/100).toFixed(1)}M`;
+      else calc.textContent=`= ${(er.value/capForYearM(yr)*100).toFixed(1)}%`; }
+    inp.oninput=()=>{er.value=parseFloat(inp.value); upd();};
+    row.querySelectorAll(".unit-tog button").forEach(b=>b.onclick=()=>{
+      er.unit=b.dataset.u;
+      row.querySelectorAll(".unit-tog button").forEach(x=>x.classList.toggle("on",x===b)); upd();});
+    wrap.appendChild(row);
+    upd();
+
+    // Option-year toggle — only the FINAL year of an extension may be an option,
+    // and only when the extension spans more than one year total (a one-year
+    // extension is always guaranteed). Counts years committed earlier too.
+    const isLastStaged = ri===inlineExtRows.length-1;
+    const totalExtYears = existingExtCount + inlineExtRows.length;
+    if(isLastStaged && totalExtYears>1){
+      const optBtn=document.createElement("button"); optBtn.className="rc-btn if-optbtn";
+      const paint=()=>{ optBtn.textContent=er.isOpt?"✓ Final year is an option":"Make final year an option";
+        optBtn.classList.toggle("on", er.isOpt); };
+      optBtn.onclick=()=>{ er.isOpt=!er.isOpt; paint(); };
+      paint();
+      wrap.appendChild(optBtn);
+    }
+  });
+
+  // "Add another year" — appends the next consecutive season as a new staged row.
+  // Whatever year was previously last can no longer be an option (only the final
+  // year may be), so clear its option flag as it loses "last" status.
+  const moreYr=extFormNextYear(name);
+  if(moreYr){
+    const more=document.createElement("div"); more.className="rc-addyear";
+    more.innerHTML=`<span class="ay-plus">+</span><span>Add another year (${moreYr})</span>`;
+    more.onclick=()=>{
+      if(inlineExtRows.length) inlineExtRows[inlineExtRows.length-1].isOpt=false;
+      inlineExtRows.push({yr:moreYr, unit:"dollar", value:NaN, isOpt:false});
+      rebuildSidebar(); };
+    wrap.appendChild(more);
+  }
+
+  const err=document.createElement("div"); err.className="if-err"; wrap.appendChild(err);
+  const btns=document.createElement("div"); btns.className="if-btns";
+  const cancel=document.createElement("button"); cancel.className="rc-btn"; cancel.textContent="Cancel";
+  cancel.onclick=()=>{ inlineForm=null; inlineExtRows=[]; rebuildSidebar(); };
+  const apply=document.createElement("button"); apply.className="rc-btn rc-extend";
+  apply.textContent=inlineExtRows.length>1?"Add extension":"Add year";
+  apply.onclick=()=>{
+    err.textContent="";
+    // Validate every staged year before committing any.
+    for(const er of inlineExtRows){
+      if(isNaN(er.value)||er.value<0){err.textContent=`Enter a salary for ${er.yr}.`; return;}
+    }
+    const totalExtAtCommit = existingExtCount + inlineExtRows.length;
+    for(const er of inlineExtRows){
+      const isFinal = er===inlineExtRows[inlineExtRows.length-1];
+      const v = er.unit==="percent" ? capForYearM(er.yr)*er.value/100*1e6 : er.value*1e6;
+      const label = er.unit==="percent" ? `${er.value.toFixed(1)}% of cap = $${(v/1e6).toFixed(2)}M` : `$${(v/1e6).toFixed(2)}M`;
+      // Only the final year of a 2+ year extension may be an option.
+      const asOption = isFinal && totalExtAtCommit>1 && er.isOpt;
+      ST.addExtension(name,er.yr,v,asOption,label);
+    }
+    inlineForm=null; inlineExtRows=[]; rebuildSidebar(); redrawChart();
+  };
+  btns.appendChild(cancel); btns.appendChild(apply); wrap.appendChild(btns);
+  return wrap;
 }
 
 /* options collapse toggle */
@@ -1195,6 +1642,7 @@ function loadTeam(name, csvText){
   try{ st=new RosterState(csvText??TEAMS[name].csv, name); }
   catch(err){ alert("Could not parse CSV:\n"+err.message); return; }
   ST=st; optionsCollapsed=false;
+  expandedPlayers.clear(); expandedYears=new Set(); removeMode=new Set(); inlineForm=null;
   rebuildStartSelector(); rebuildSidebar(); redrawChart();
 }
 function rebuildTeamSelector(selected){
@@ -1241,6 +1689,7 @@ $("themeBtn").onclick=()=>applyTheme(!document.body.classList.contains("light"))
 /* ════ MOUSE INTERACTION LISTENERS ════ */
 canvas.addEventListener("mousemove", (e) => {
   if (!ST) return;
+  if (highlightedPlayers.size) return;   // one or more panels open; skip hover tooltip
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   const mx = (e.clientX - rect.left) * dpr;
@@ -1300,13 +1749,81 @@ canvas.addEventListener("mouseleave", () => {
   }
 });
 
+// ── Click a segment to select a player (highlight across years + panel) ──
+function segmentAtEvent(e){
+  if(!ST) return null;
+  const rect=canvas.getBoundingClientRect();
+  const dpr=window.devicePixelRatio||1;
+  const mx=(e.clientX-rect.left)*dpr, my=(e.clientY-rect.top)*dpr;
+  const data=ST.chartData();
+  const years=ST.displayYears().filter(y=>data.has(y));
+  if(!years.length) return null;
+  const s=dpr*(rect.width<900?0.85:1);
+  const mL=58*s,mR=86*s,mT=34*s,mB=34*s;
+  const pw=canvas.width-mL-mR, ph=canvas.height-mT-mB;
+  const slotW=pw/years.length, barW=Math.min(slotW*0.62,150*s);
+  let maxV=0;
+  for(const yc of years){maxV=Math.max(maxV,data.get(yc).reduce((a,e)=>a+e[1],0)/1e6);
+    const t=THRESHOLDS[parseInt(yc)]; if(t) maxV=Math.max(maxV,t[3]);}
+  maxV*=1.07;
+  const Y=v=>mT+ph-(v/maxV)*ph;
+  for(let i=0;i<years.length;i++){
+    const yc=years[i], cx=mL+slotW*(i+0.5);
+    if(mx>=cx-barW/2 && mx<=cx+barW/2){
+      let bottom=0;
+      for(const [name,sal] of data.get(yc)){
+        const top=Y((bottom+sal)/1e6), base=Y(bottom/1e6);
+        if(my>=top && my<=base) return name;
+        bottom+=sal;
+      }
+    }
+  }
+  return null;
+}
+canvas.addEventListener("click",(e)=>{
+  const name=segmentAtEvent(e);
+  // Clicking empty space clears everything.
+  if(!name){ clearSelection(); return; }
+  // Clicking an already-highlighted player deselects it (and closes its panel).
+  if(expandedPlayers.has(name)){
+    expandedPlayers.delete(name);
+    if(inlineForm && inlineForm.name===name) inlineForm=null;
+    rebuildSidebar();
+    redrawChart();
+    return;
+  }
+  // Otherwise add this player to the highlight set and open its panel,
+  // leaving any other selected players in place.
+  expandedPlayers.add(name);
+  activeTooltip=null;            // hide the small hover tip
+  // Make sure the ROSTER section is open so the card is visible, then scroll to it.
+  if(optionsCollapsed){ optionsCollapsed=false; }
+  rebuildSidebar();
+  redrawChart();
+  const card=document.querySelector(`.rost-card[data-player="${cssEsc(name)}"]`);
+  if(card) card.scrollIntoView({block:"nearest"});
+});
+function cssEsc(s){ return (window.CSS&&CSS.escape)?CSS.escape(s):s.replace(/"/g,'\\"'); }
+function clearSelection(){
+  if(!expandedPlayers.size) return;
+  expandedPlayers.clear();
+  inlineForm=null;
+  rebuildSidebar();
+  redrawChart();
+}
+
+// ── (Floating player panel removed — selecting a player now expands their
+//     roster card instead. Expanded panels and chart highlights are the same
+//     set, so they always match: expanding/clicking adds a highlight, closing
+//     a panel or clicking a highlighted bar removes it.) ──
+
 /* ── Add Player dialog ── */
 const addPlayerDlg=$("addPlayerDialog");
 let addPlayerCache=[];   // players for the currently-selected source team
 function otherTeamNames(){
   return Object.keys(TEAMS).filter(t=>t!==ST.teamName);
 }
-$("addPlayerBtn").onclick=()=>{
+function openAddPlayerDialog(){
   if(!ST) return;
   const others=otherTeamNames();
   if(!others.length){alert("No other teams loaded. Add more team CSVs first."); return;}
@@ -1316,7 +1833,7 @@ $("addPlayerBtn").onclick=()=>{
   $("addPlayerErr").textContent="";
   rebuildAddPlayerList();
   addPlayerDlg.showModal();
-};
+}
 function rebuildAddPlayerList(){
   const team=$("addPlayerTeam").value;
   const sel=$("addPlayerSelect"); sel.innerHTML="";
@@ -1419,17 +1936,30 @@ $("addPlayerSubmit").onclick=()=>{
 
 /* ── Extension dialog ── */
 const extDlg=$("extDialog"); let extExpiring=[];
-$("addExtBtn").onclick=()=>{
+function openExtensionDialog(preName){
   if(!ST) return;
   extExpiring=ST.expiringContracts();
   if(!extExpiring.length){alert("No players with expiring contracts found."); return;}
   const sel=$("extPlayer"); sel.innerHTML="";
   extExpiring.forEach(([n,y,s],i)=>{const o=document.createElement("option");
     o.value=i; o.textContent=`${n} — last year ${y} (${fmtM(s)})`; sel.appendChild(o);});
-  sel.value=0; $("extOptFlag").checked=false; $("extErr").textContent="";
+  let idx=0;
+  if(preName){ const fi=extExpiring.findIndex(([n])=>n===preName); if(fi>=0) idx=fi; }
+  sel.value=idx; $("extOptFlag").checked=false; $("extErr").textContent="";
   extRowState={};
   rebuildExtYears(); extDlg.showModal();
-};
+}
+function openExtensionFor(name){
+  // A pending option must be resolved before extending.
+  if(ST.hasPendingOption(name)){
+    alert(`${name} has a pending option. Accept or decline it in the Manage section before extending.`);
+    return;
+  }
+  const can=ST.expiringContracts().some(([n])=>n===name);
+  if(!can){ alert(`${name} has no expiring contract to extend (their deal already runs to the last charted season).`); return; }
+  clearSelection();
+  openExtensionDialog(name);
+}
 function extAvailableYears(){
   const i=parseInt($("extPlayer").value);
   if(isNaN(i)||!extExpiring[i]) return [];
@@ -1519,15 +2049,22 @@ $("extSubmit").onclick=()=>{
 
 /* ── Trade dialog ── */
 const tradeDlg=$("tradeDialog"); let tradeRoster=[];
-$("addTradeBtn").onclick=()=>{
+function openTradeDialog(preName){
   if(!ST) return;
   tradeRoster=ST.rosterOnBooks().filter(([n])=>!ST.traded.has(n));
   if(!tradeRoster.length){alert("No players left on the books."); return;}
   const sel=$("tradePlayer"); sel.innerHTML="";
   tradeRoster.forEach(([n,yrs],i)=>{const span=yrs.length>1?`${yrs[0]} – ${yrs[yrs.length-1]}`:yrs[0];
     const o=document.createElement("option"); o.value=i; o.textContent=`${n}   (${span})`; sel.appendChild(o);});
-  sel.value=0; rebuildTradeYears(); $("tradeErr").textContent=""; tradeDlg.showModal();
-};
+  let idx=0;
+  if(preName){ const fi=tradeRoster.findIndex(([n])=>n===preName); if(fi>=0) idx=fi; }
+  sel.value=idx; rebuildTradeYears(); $("tradeErr").textContent=""; tradeDlg.showModal();
+}
+function openRemoveFor(name){
+  if(ST.traded.has(name)){ alert(`${name} is already removed from ${ST.traded.get(name)} onward.`); return; }
+  clearSelection();
+  openTradeDialog(name);
+}
 function rebuildTradeYears(){
   const i=parseInt($("tradePlayer").value), sel=$("tradeYear"); sel.innerHTML="";
   if(isNaN(i)||!tradeRoster[i]) return;
