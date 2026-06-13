@@ -927,7 +927,12 @@ function renderChart(ctx,state,x0,y0,W,H,s){
   const hatch=ctx.createPattern(makeHatch(s),"repeat");
   // Highlight = the set of expanded player panels (kept in sync both ways).
   const selSet = (typeof highlightedPlayers!=='undefined' && highlightedPlayers) ? highlightedPlayers : null;
-  const anySel = selSet && selSet.size>0;
+  let anySel = selSet && selSet.size>0;
+
+  // Check to display normally if no selected player is present in the chart
+  if (anySel) {
+    anySel = years.some(yc => data.get(yc).some(p => selSet.has(p[0])));
+  }
   years.forEach((yc,i)=>{let bottom=0; const cx=X(i);
     for(const [name,sal,isOpt] of data.get(yc)){
       const top=Y((bottom+sal)/1e6), h=Y(bottom/1e6)-top, x=cx-barW/2;
