@@ -223,6 +223,7 @@
     text-transform:uppercase; margin:8px 0 3px;}
   .add-panel select{width:100%; font-size:12px; padding:5px 8px;}
   .add-panel .ap-preview{margin-top:8px; font-size:10.5px; line-height:1.5; color:var(--subtext);}
+  .add-panel .ap-contract.inline-form{margin-top:4px; padding-top:0; border-top:none;}
   .add-panel .ap-err{color:var(--red); font-size:10.5px; min-height:13px; margin-top:5px;}
   .add-panel .ap-btns{display:flex; gap:8px; margin-top:10px;}
   .add-panel .ap-btns button{flex:1; padding:6px 0; font-size:12px; font-weight:600;}
@@ -1583,12 +1584,11 @@ function buildAddPlayerPanel(){
       `<button id="apModeLeague" class="${leagueOn?"on":""}">From league</button>`+
       `<button id="apModeDraft" class="${leagueOn?"":"on"}">Draft pick</button>`+
     `</div>`+
-    // ── League block ──
-    // ── League block: season, then team, then player ──
+    // ── League block: team, then player, then season ──
     `<div id="apLeague" style="display:${leagueOn?"block":"none"}">`+
-      `<div class="ap-label">Join in season</div><select id="addPlayerYear"></select>`+
       `<div class="ap-label">From team</div><select id="addPlayerTeam"></select>`+
       `<div class="ap-label">Player</div><select id="addPlayerSelect"></select>`+
+      `<div class="ap-label">Join in season</div><select id="addPlayerYear"></select>`+
     `</div>`+
     // ── Draft block: season + pick (inline), then name ──
     `<div id="apDraft" style="display:${leagueOn?"none":"block"}">`+
@@ -1909,6 +1909,10 @@ function clearSelection(){
 /* ── Add Player (inline panel) ── */
 let addPlayerCache=[];   // players for the currently-selected source team
 let addPlayerMode="league";   // "league" (from another team) or "draft" (rookie scale)
+// When a league player has no existing salary at the chosen join season, the user
+// authors a contract here — same $M/% rows as the extension form.
+// Each row: {yr, unit:"dollar"|"percent", value:Number, isOpt:Bool}.
+let addContractRows=[];
 function otherTeamNames(){
   return Object.keys(TEAMS).filter(t=>t!==ST.teamName);
 }
@@ -1957,19 +1961,20 @@ function rebuildAddPlayerList(){
   rebuildAddPlayerYears();
 }
 function rebuildAddPlayerYears(){
-  // Offer only seasons where this player actually has a salary — picking a join
-  // year keeps that year and everything after it (in real calendar terms).
+  // Offer EVERY season as a possible join year. If the chosen season (and the
+  // ones after it) hold no salary for this player, the user authors a contract
+  // via the inline $M/% entry below; otherwise their existing figures carry over.
   const ysel=$("addPlayerYear"); ysel.innerHTML="";
   const i=parseInt($("addPlayerSelect").value);
   const src=(!isNaN(i)&&i>=0)?addPlayerCache[i]:null;
-  let firstFilled=0, any=false;
+  let firstFilled=-1;
   ST.yearCols.forEach((yc,idx)=>{
-    const has=src&&parseSalary(src[yc])!=null;
-    if(has){ if(!any){firstFilled=idx; any=true;}
-      const o=document.createElement("option"); o.value=idx; o.textContent=yc; ysel.appendChild(o);}
+    if(firstFilled<0 && src && parseSalary(src[yc])!=null) firstFilled=idx;
+    const o=document.createElement("option"); o.value=idx; o.textContent=yc; ysel.appendChild(o);
   });
-  if(!any){const o=document.createElement("option"); o.value="0"; o.textContent="(no seasons)"; ysel.appendChild(o);}
-  ysel.value=firstFilled;            // default: their first contract season
+  if(!ST.yearCols.length){const o=document.createElement("option"); o.value="0"; o.textContent="(no seasons)"; ysel.appendChild(o);}
+  ysel.value=firstFilled>=0?firstFilled:0;   // default: first contracted season, else the first season
+  addContractRows=[];                        // reset any staged manual contract
   updateAddPlayerPreview();
 }
 /* Return {Player, Age, <year>…, Guaranteed} shifted so the player's contract
@@ -2001,21 +2006,116 @@ function isSourceOption(src,yc){
     r+=s; if(y===yc) return r>guar+1;}
   return false;
 }
+// True when the selected player already has salary in the chosen join season or
+// any season after it (carry-over path). False → user must author a contract.
+function addHasExistingContract(src, startIdx){
+  return ST.yearCols.some((yc,idx)=>idx>=startIdx && parseSalary(src[yc])!=null);
+}
 function updateAddPlayerPreview(){
   const i=parseInt($("addPlayerSelect").value);
   const box=$("addPlayerPreview");
-  if(isNaN(i)||i<0||!addPlayerCache[i]){box.textContent=""; return;}
+  if(isNaN(i)||i<0||!addPlayerCache[i]){box.textContent=""; addContractRows=[]; return;}
   const startIdx=parseInt($("addPlayerYear").value)||0;
   const src=addPlayerCache[i];
-  const {dict,optionYears}=buildShiftedContract(src,startIdx);
-  const optSet=new Set(optionYears);
-  const parts=ST.yearCols.map(yc=>{
-    const s=parseSalary(dict[yc]); if(!s) return null;
-    return `${yc}: ${fmtM(s)}${optSet.has(yc)?"  (option)":""}`;}).filter(Boolean);
-  // count source seasons that were dropped because they precede the join year
-  const dropped=ST.yearCols.filter((yc,idx)=>idx<startIdx && parseSalary(src[yc])!=null).length;
-  box.innerHTML="Contract as added:<br>"+(parts.join("<br>")||"(no seasons at this start year)")
-    +(dropped>0?`<br><span style="color:var(--orange)">${dropped} earlier season(s) dropped — joining mid-contract</span>`:"");
+
+  if(addHasExistingContract(src,startIdx)){
+    // ── Carry-over: keep the player's real figures from the join year onward ──
+    addContractRows=[];
+    const {dict,optionYears}=buildShiftedContract(src,startIdx);
+    const optSet=new Set(optionYears);
+    const parts=ST.yearCols.map(yc=>{
+      const s=parseSalary(dict[yc]); if(!s) return null;
+      return `${yc}: ${fmtM(s)}${optSet.has(yc)?"  (option)":""}`;}).filter(Boolean);
+    const dropped=ST.yearCols.filter((yc,idx)=>idx<startIdx && parseSalary(src[yc])!=null).length;
+    box.innerHTML="Contract as added:<br>"+(parts.join("<br>")||"(no seasons at this start year)")
+      +(dropped>0?`<br><span style="color:var(--orange)">${dropped} earlier season(s) dropped — joining mid-contract</span>`:"");
+    return;
+  }
+  // ── Manual entry: this player has no salary at/after the chosen season ──
+  renderAddContractForm(box, startIdx);
+}
+/* Render the inline contract-authoring form (mirrors the extension form: per-year
+   $M / % cap rows, an "add another year" affordance, and an option flag on the
+   final year of a 2+ year deal). Rows are staged in addContractRows. */
+function renderAddContractForm(box, startIdx){
+  const startYr=ST.yearCols[startIdx];
+  if(!startYr){box.textContent=""; addContractRows=[]; return;}
+  // Seed (or re-seed) the first staged row when the form first appears or the
+  // chosen start season changes.
+  if(!addContractRows.length || ST.yearCols.indexOf(addContractRows[0].yr)!==startIdx){
+    addContractRows=[{yr:startYr, unit:"dollar", value:NaN, isOpt:false}];
+  }
+  box.innerHTML="";
+  const form=document.createElement("div"); form.className="inline-form ap-contract";
+  const title=document.createElement("div"); title.className="if-title";
+  title.textContent="No contract on file — enter one:";
+  form.appendChild(title);
+
+  addContractRows.forEach((er,ri)=>{
+    const yr=er.yr;
+    const row=document.createElement("div"); row.className="if-row";
+    row.innerHTML=`<span class="ifr-yr">${yr}</span>
+      <input type="number" step="0.1" min="0" placeholder="0.0">
+      <div class="unit-tog">
+        <button data-u="dollar" class="${er.unit==="dollar"?"on":""}">$M</button>
+        <button data-u="percent" class="${er.unit==="percent"?"on":""}">% cap</button>
+      </div><span class="ifr-calc"></span>`;
+    const inp=row.querySelector("input");
+    const calc=row.querySelector(".ifr-calc");
+    if(!isNaN(er.value)) inp.value=er.value;
+    function upd(){ if(isNaN(er.value)){calc.textContent=""; return;}
+      if(er.unit==="percent") calc.textContent=`= $${(capForYearM(yr)*er.value/100).toFixed(1)}M`;
+      else calc.textContent=`= ${(er.value/capForYearM(yr)*100).toFixed(1)}%`; }
+    inp.oninput=()=>{er.value=parseFloat(inp.value); upd();};
+    row.querySelectorAll(".unit-tog button").forEach(b=>b.onclick=()=>{
+      er.unit=b.dataset.u;
+      row.querySelectorAll(".unit-tog button").forEach(x=>x.classList.toggle("on",x===b)); upd();});
+    form.appendChild(row);
+    upd();
+
+    // Only the final year of a 2+ year deal may be an option.
+    const isLast = ri===addContractRows.length-1;
+    if(isLast && addContractRows.length>1){
+      const optBtn=document.createElement("button"); optBtn.className="rc-btn if-optbtn";
+      const paint=()=>{ optBtn.textContent=er.isOpt?"✓ Final year is an option":"Make final year an option";
+        optBtn.classList.toggle("on", er.isOpt); };
+      optBtn.onclick=()=>{ er.isOpt=!er.isOpt; paint(); };
+      paint();
+      form.appendChild(optBtn);
+    }
+  });
+
+  // "Add another year" — append the next consecutive season.
+  const lastYr=addContractRows[addContractRows.length-1].yr;
+  const nextIdx=ST.yearCols.indexOf(lastYr)+1;
+  const moreYr=ST.yearCols[nextIdx];
+  if(moreYr){
+    const more=document.createElement("div"); more.className="rc-addyear";
+    more.innerHTML=`<span class="ay-plus">+</span><span>Add another year (${moreYr})</span>`;
+    more.onclick=()=>{
+      addContractRows[addContractRows.length-1].isOpt=false;  // only final year may be option
+      addContractRows.push({yr:moreYr, unit:"dollar", value:NaN, isOpt:false});
+      updateAddPlayerPreview(); };
+    form.appendChild(more);
+  }
+  box.appendChild(form);
+}
+// Convert staged manual rows into a player dict the roster understands. Years 1..n
+// are guaranteed except a flagged final-year option, so Guaranteed = sum of
+// non-option salaries (this makes determineOption flag the option year).
+function buildManualContract(name, age){
+  const dict={"Player":name,"Age":age||""};
+  for(const yc of ST.yearCols) dict[yc]="";
+  let guaranteed=0;
+  addContractRows.forEach((er,ri)=>{
+    const v = er.unit==="percent" ? capForYearM(er.yr)*er.value/100*1e6 : er.value*1e6;
+    dict[er.yr]="$"+Math.round(v).toLocaleString("en-US");
+    const isLast=ri===addContractRows.length-1;
+    const asOption=isLast && addContractRows.length>1 && er.isOpt;
+    if(!asOption) guaranteed+=Math.round(v);
+  });
+  dict[ST.guaranteedCol]="$"+guaranteed.toLocaleString("en-US");
+  return dict;
 }
 // Handlers are bound inside buildAddPlayerPanel (the panel is rebuilt on each
 // rebuildSidebar). submitAddPlayer adds the player and closes the panel.
@@ -2098,14 +2198,31 @@ function submitAddPlayer(){
   const i=parseInt($("addPlayerSelect").value);
   if(isNaN(i)||i<0||!addPlayerCache[i]){err.textContent="Pick a player."; return;}
   const startIdx=parseInt($("addPlayerYear").value)||0;
-  const {dict}=buildShiftedContract(addPlayerCache[i],startIdx);
+  const src=addPlayerCache[i];
+
+  if(!addHasExistingContract(src,startIdx)){
+    // Manual contract authored via the inline $M/% rows.
+    if(!addContractRows.length){err.textContent="Enter a salary for the contract."; return;}
+    for(const er of addContractRows){
+      if(isNaN(er.value)||er.value<0){err.textContent=`Enter a salary for ${er.yr}.`; return;}
+    }
+    const dict=buildManualContract(src["Player"], src["Age"]);
+    if(!ST.yearCols.some(yc=>parseSalary(dict[yc]))){
+      err.textContent="That contract leaves no seasons on the chart."; return;
+    }
+    ST.addPlayer(dict, team);
+    addPlayerOpen=false; addContractRows=[]; rebuildSidebar(); redrawChart();
+    return;
+  }
+
+  const {dict}=buildShiftedContract(src,startIdx);
   // Guard: at least one season must land within the chart.
   if(!ST.yearCols.some(yc=>parseSalary(dict[yc]))){
     err.textContent="That start year leaves no seasons on the chart. Pick an earlier season.";
     return;
   }
   ST.addPlayer(dict, team);
-  addPlayerOpen=false; rebuildSidebar(); redrawChart();
+  addPlayerOpen=false; addContractRows=[]; rebuildSidebar(); redrawChart();
 }
 
 /* ── Extension dialog ── */
