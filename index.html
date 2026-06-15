@@ -196,6 +196,11 @@
   .rc-addyear .ay-plus{font-size:15px; width:16px; text-align:center;}
   .rc-addyear.disabled{opacity:.45; cursor:not-allowed; border-color:var(--line); color:var(--subtext);}
   .rc-addyear.disabled:hover{border-color:var(--line); color:var(--subtext);}
+  /* remove-seasons button: red variant of the add-year affordance */
+  .rc-removeyear:hover{border-color:var(--red); color:var(--red);}
+  .rc-removeyear.active{border-style:solid; border-color:var(--red); color:#fff; background:var(--red);}
+  .rc-removeyear.active:hover{border-color:var(--red); color:#fff; background:var(--red);}
+  .rc-removeyear.disabled:hover{border-color:var(--line); color:var(--subtext);}
   .rc-btn.disabled,.rc-btn:disabled{opacity:.4; cursor:not-allowed;}
   .rc-actions{display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;}
   .rc-btn{font-size:11px; font-weight:600; border-radius:5px; padding:4px 10px; cursor:pointer;
@@ -229,6 +234,14 @@
   .add-panel input[type=text]{width:100%; background:var(--card); color:var(--text);
     border:1px solid var(--line); border-radius:5px; padding:5px 8px; font:inherit; font-size:12px;}
   .add-panel input[type=text]:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
+  /* season + pick on one row */
+  .add-panel .ap-draftrow{display:flex; gap:8px; align-items:flex-end;}
+  .add-panel .ap-draftrow .ap-col{flex:1;}
+  .add-panel .ap-draftrow .ap-col-pick{flex:0 0 84px;}
+  .add-panel .ap-draftrow .ap-label{margin-top:8px;}
+  .add-panel input[type=number]#draftPick{width:100%; background:var(--card); color:var(--text);
+    border:1px solid var(--line); border-radius:5px; padding:5px 8px; font:inherit; font-size:12px; text-align:center;}
+  .add-panel input[type=number]#draftPick:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
 
   /* Inline extension salary entry (rendered inside a player card) */
   .inline-form{margin-top:9px; padding-top:9px; border-top:1px solid var(--line);}
@@ -279,11 +292,17 @@
   .ys-growth .ysg-inp:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
   .ys-growth .ysg-pct{color:var(--subtext); font-size:11px;}
   .ys-body .ys-bsub{color:var(--subtext); font-size:10px; margin:3px 0 5px;}
-  .yt-table{border-collapse:collapse; font:11px/1.5 Consolas,Menlo,monospace;}
+  .yt-table{border-collapse:collapse; font:11px/1.6 Consolas,Menlo,monospace; width:100%;}
   .yt-lbl{color:var(--text); padding:1px 12px 1px 0; white-space:nowrap;}
   .yt-dot{display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:6px; vertical-align:middle;}
-  .yt-val{text-align:right; padding:1px 8px 1px 0; font-weight:700; color:var(--text);}
-  .yt-st{color:var(--subtext); font-size:10px;}
+  .yt-line{text-align:right; padding:1px 8px 1px 0; color:var(--text); white-space:nowrap;}
+  .yt-arrow{text-align:center; padding:1px 6px; color:var(--text); white-space:nowrap;}
+  .yt-val{text-align:right; padding:1px 0; font-weight:700; color:var(--text); white-space:nowrap;}
+  /* Payroll marker: a thin full-width line (same colour/weight as the box
+     border) showing where total salary sits among the threshold rows. Drawn as a
+     1px border on a zero-height row so it doesn't shift any text. */
+  .yt-marker td{padding:0; height:0; line-height:0;}
+  .yt-payline{height:0; border-top:1px solid var(--line); margin:3px -10px;}
 
   /* Selected-player panel (click a bar segment) */
   .player-panel{
@@ -358,11 +377,7 @@
   <label class="bar-label" for="startYear">From</label>
   <select id="startYear" aria-label="First season to display"></select>
   <span class="spacer"></span>
-  <button class="b-accent" id="openBtn">Add CSV…</button>
-  <input type="file" id="fileInput" accept=".csv,text/csv" hidden>
-  <button class="b-orange" id="resetBtn">Reset moves</button>
   <button class="b-green" id="exportBtn">Export PNG</button>
-  <button id="themeBtn" title="Toggle light / dark">☀ Light</button>
 </div>
 
 <div id="main">
@@ -798,13 +813,14 @@ class RosterState{
         else if(tm>cap) status="Below Tax";   // above cap, below tax
         else if(tm>floor) status="Below Cap"; // above floor, below cap
         else status="Below Floor";            // under the salary floor
-        // margin vs every line (positive = above the line)
+        // For each tier line: its actual $ value and the team's margin
+        // (positive = payroll is above the line).
         breakdown=[
-          {label:"2nd Apron",    value:tm-a2},
-          {label:"1st Apron",    value:tm-a1},
-          {label:"Luxury Tax",   value:tm-tax},
-          {label:"Salary Cap",   value:tm-cap},
-          {label:"Salary Floor", value:tm-floor},
+          {label:"2nd Apron",    line:a2,    value:tm-a2},
+          {label:"1st Apron",    line:a1,    value:tm-a1},
+          {label:"Luxury Tax",   line:tax,   value:tm-tax},
+          {label:"Salary Cap",   line:cap,   value:tm-cap},
+          {label:"Salary Floor", line:floor, value:tm-floor},
         ];
       }
       out.push({yc, total:tm, status, breakdown, players:(data.get(yc)||[]).length});
@@ -1308,13 +1324,27 @@ function refreshTotals(){
       }else{
         growthHTML=`<div class="ys-growth"><span class="ysg-lbl">Base year (actual values)</span></div>`;
       }
-      let rows=growthHTML+`<div class="ys-bsub">${r.players}/15 players</div><table class="yt-table"><tbody>`;
+      let rows=growthHTML+`<div class="ys-bsub">${r.players}/15 players · payroll $${r.total.toFixed(1)}M</div><table class="yt-table"><tbody>`;
+      // The breakdown rows run high→low (2nd Apron … Salary Floor). The payroll
+      // sits just above the first line it clears, so insert a coloured marker row
+      // — matching the box's status colour — at that boundary (or at the very top
+      // if it's over the 2nd apron, or the very bottom if it's under the floor).
+      const markerHTML=
+        `<tr class="yt-marker"><td colspan="4"><div class="yt-payline" style="border-color:rgba(${rgb},0.45)"></div></td></tr>`;
+      let markerPlaced=false;
       for(const b of r.breakdown){
-        const over=b.value>=0, sign=over?"+":"", dot=tierLineColor(b.label);
+        const over=b.value>=0, dot=tierLineColor(b.label);
+        // Drop the marker just before the first line the payroll is above.
+        if(over && !markerPlaced){ rows+=markerHTML; markerPlaced=true; }
+        const arrow=over?"↑":"↓";
+        const sign=over?"+":"−";
         rows+=`<tr><td class="yt-lbl"><span class="yt-dot" style="background:${dot}"></span>${b.label}</td>`+
-              `<td class="yt-val">${sign}${b.value.toFixed(1)}M</td>`+
-              `<td class="yt-st">${over?"over":"under"}</td></tr>`;
+              `<td class="yt-line">$${b.line.toFixed(1)}M</td>`+
+              `<td class="yt-arrow">${arrow}</td>`+
+              `<td class="yt-val">${sign}$${Math.abs(b.value).toFixed(1)}M</td></tr>`;
       }
+      // Under the floor → payroll is below every line; marker goes at the bottom.
+      if(!markerPlaced) rows+=markerHTML;
       rows+=`</tbody></table>`;
       body.innerHTML=rows;
       if(yr>BASE_YEAR){
@@ -1383,15 +1413,6 @@ function rebuildSidebar(){
         if(ST.isAddedPlayer(name)) expandedPlayers.delete(name);
         rebuildSidebar(); redrawChart(); };
       head.appendChild(rev);
-      // remove-seasons (×) toggle, just right of the undo button. When active,
-      // on-books year rows become clickable red boxes that peel off the end.
-      const rmt=document.createElement("button"); rmt.className="rc-rmtoggle"+(removeMode.has(name)?" active":"");
-      rmt.innerHTML="✕";
-      rmt.title=removeMode.has(name)?"Done removing seasons":"Remove seasons (peel from the last year)";
-      rmt.onclick=(ev)=>{ ev.stopPropagation();
-        if(removeMode.has(name)) removeMode.delete(name); else removeMode.add(name);
-        rebuildSidebar(); };
-      head.appendChild(rmt);
     }
     head.onclick=()=>{ if(expandedPlayers.has(name)) expandedPlayers.delete(name); else expandedPlayers.add(name); rebuildSidebar(); redrawChart(); };
     card.appendChild(head);
@@ -1493,10 +1514,25 @@ function rebuildSidebar(){
         body.appendChild(lk);
       }
 
+      // ── Remove-seasons toggle ──
+      // A dedicated button (above the extension control). When active, on-books
+      // year rows become clickable red boxes that peel off from the last year.
+      const canRemove = lastRemovable>=0;
+      const rmBtn=document.createElement("div");
+      rmBtn.className="rc-addyear rc-removeyear"+(inRemove?" active":"")+((!canRemove&&!inRemove)?" disabled":"");
+      rmBtn.innerHTML=`<span class="ay-plus">${inRemove?"✓":"–"}</span>`+
+        `<span>${inRemove?"Done removing seasons":(canRemove?"Remove seasons":"No seasons to remove")}</span>`;
+      if(canRemove||inRemove){
+        rmBtn.onclick=()=>{
+          if(removeMode.has(name)) removeMode.delete(name); else removeMode.add(name);
+          rebuildSidebar(); };
+      }
+      body.appendChild(rmBtn);
+
       // ── Add-extension affordance ──
       // A single inline form stages one OR MORE consecutive years and commits
       // them together. Extension years are removed the same way as standard
-      // years — via the red × remove-mode — so there's no separate remove button.
+      // years — via the remove-seasons toggle — so there's no separate remove button.
       const canExt=ST.expiringContracts().some(([n])=>n===name);
       const extFormOpen = inlineForm && inlineForm.name===name && inlineForm.mode==="extend";
       if(inRemove){
@@ -1522,7 +1558,7 @@ function rebuildSidebar(){
 
   // "add player" — toggles an inline panel (no pop-up)
   const add=document.createElement("div"); add.className="rost-add"+(addPlayerOpen?" open":"");
-  add.innerHTML=`<span class="ra-plus">${addPlayerOpen?"×":"+"}</span><span class="ra-label">Add player (league or draft)</span>`;
+  add.innerHTML=`<span class="ra-plus">${addPlayerOpen?"×":"+"}</span><span class="ra-label">Add player</span>`;
   add.onclick=()=>{ addPlayerOpen?closeAddPlayer():openAddPlayerPanel(); };
   rl.appendChild(add);
 
@@ -1548,17 +1584,21 @@ function buildAddPlayerPanel(){
       `<button id="apModeDraft" class="${leagueOn?"":"on"}">Draft pick</button>`+
     `</div>`+
     // ── League block ──
+    // ── League block: season, then team, then player ──
     `<div id="apLeague" style="display:${leagueOn?"block":"none"}">`+
+      `<div class="ap-label">Join in season</div><select id="addPlayerYear"></select>`+
       `<div class="ap-label">From team</div><select id="addPlayerTeam"></select>`+
       `<div class="ap-label">Player</div><select id="addPlayerSelect"></select>`+
-      `<div class="ap-label">Join in season</div><select id="addPlayerYear"></select>`+
     `</div>`+
-    // ── Draft block ──
+    // ── Draft block: season + pick (inline), then name ──
     `<div id="apDraft" style="display:${leagueOn?"none":"block"}">`+
+      `<div class="ap-draftrow">`+
+        `<div class="ap-col"><div class="ap-label">Rookie season</div><select id="draftYear"></select></div>`+
+        `<div class="ap-col ap-col-pick"><div class="ap-label">Pick</div>`+
+          `<input type="number" id="draftPick" min="1" max="30" step="1" value="1" placeholder="1–30"></div>`+
+      `</div>`+
       `<div class="ap-label">Player name</div>`+
-      `<input type="text" id="draftName" placeholder="e.g. Cooper Flagg" autocomplete="off">`+
-      `<div class="ap-label">Pick</div><select id="draftPick"></select>`+
-      `<div class="ap-label">Rookie season</div><select id="draftYear"></select>`+
+      `<input type="text" id="draftName" placeholder="Player name" autocomplete="off">`+
     `</div>`+
     `<div class="ap-preview" id="addPlayerPreview"></div>`+
     `<div class="ap-err" id="addPlayerErr"></div>`+
@@ -1575,7 +1615,7 @@ function buildAddPlayerPanel(){
   wrap.querySelector("#addPlayerYear").onchange=updateAddPlayerPreview;
   // draft handlers
   wrap.querySelector("#draftName").oninput=updateDraftPreview;
-  wrap.querySelector("#draftPick").onchange=updateDraftPreview;
+  wrap.querySelector("#draftPick").oninput=updateDraftPreview;
   wrap.querySelector("#draftYear").onchange=updateDraftPreview;
   // shared
   wrap.querySelector("#addPlayerCancel").onclick=closeAddPlayer;
@@ -1730,42 +1770,10 @@ function rebuildTeamSelector(selected){
 }
 $("teamSelect").onchange=e=>loadTeam(e.target.value);
 
-/* Add CSV (file or drag-drop) → becomes a new team entry */
-$("openBtn").onclick=()=>$("fileInput").click();
-function ingestCSVFile(file){
-  const r=new FileReader();
-  r.onload=()=>{
-    const name=file.name.replace(/\.csv$/i,"");
-    try{ new RosterState(r.result,name); }    // validate
-    catch(err){ alert("Could not parse CSV:\n"+err.message); return; }
-    TEAMS[name]={csv:r.result};
-    rebuildTeamSelector(name); loadTeam(name,r.result);
-  };
-  r.readAsText(file);
-}
-$("fileInput").onchange=e=>{const f=e.target.files[0]; if(f) ingestCSVFile(f); e.target.value="";};
-let dragDepth=0;
-addEventListener("dragenter",e=>{e.preventDefault();dragDepth++;document.body.classList.add("dragging");});
-addEventListener("dragleave",e=>{e.preventDefault();if(--dragDepth<=0){dragDepth=0;document.body.classList.remove("dragging");}});
-addEventListener("dragover",e=>e.preventDefault());
-addEventListener("drop",e=>{e.preventDefault();dragDepth=0;document.body.classList.remove("dragging");
-  const f=e.dataTransfer.files[0]; if(f) ingestCSVFile(f);});
-
-$("resetBtn").onclick=()=>{if(ST){
-  for(const k of Object.keys(GROWTH)) delete GROWTH[k];   // back to default 6.7%
-  recomputeThresholds();
-  ST.resetMoves(); rebuildSidebar(); redrawChart();
-}};
 $("exportBtn").onclick=()=>{if(ST) exportPNG(ST);};
 
-/* ── Light / dark theme toggle ── */
-function applyTheme(light){
-  document.body.classList.toggle("light",light);
-  $("themeBtn").textContent = light ? "🌙 Dark" : "☀ Light";
-  refreshTheme();
-  redrawChart();
-}
-$("themeBtn").onclick=()=>applyTheme(!document.body.classList.contains("light"));
+/* Chart colours are read once from the (dark) CSS theme. */
+refreshTheme();
 
 /* ════ MOUSE INTERACTION LISTENERS ════ */
 canvas.addEventListener("mousemove", (e) => {
@@ -2013,17 +2021,11 @@ function updateAddPlayerPreview(){
 // rebuildSidebar). submitAddPlayer adds the player and closes the panel.
 
 /* ── Draft pick mode ──
-   Populate the pick (1–30) and rookie-season selects, then build a rookie-scale
-   contract: four consecutive seasons starting at the chosen entry year, with
+   Pick is a number box (1–30). Populate the rookie-season dropdown, then build a
+   rookie-scale contract: four consecutive seasons from the chosen entry year,
    years 1–2 guaranteed and years 3–4 as team options. */
 function rebuildDraftControls(){
-  const psel=$("draftPick"); if(!psel) return;
-  if(!psel.options.length){
-    for(let p=1;p<=ROOKIE_SCALE.length;p++){
-      const o=document.createElement("option"); o.value=p; o.textContent="Pick #"+p; psel.appendChild(o);}
-    psel.value=1;
-  }
-  const ysel=$("draftYear");
+  const ysel=$("draftYear"); if(!ysel) return;
   if(!ysel.options.length){
     // Rookie season can be any charted season (the deal runs 4 years from there;
     // seasons past the chart's end are simply not shown).
@@ -2058,6 +2060,9 @@ function updateDraftPreview(){
   const name=($("draftName").value||"").trim();
   const pick=parseInt($("draftPick").value);
   const startIdx=parseInt($("draftYear").value)||0;
+  if(isNaN(pick)||pick<1||pick>ROOKIE_SCALE.length){
+    box.innerHTML=`<span style="color:var(--orange)">Enter a pick from 1 to ${ROOKIE_SCALE.length}.</span>`; return;
+  }
   const dict=buildRookieContract(name,pick,startIdx);
   if(!dict){box.textContent=""; return;}
   const guar=parseSalary(dict[ST.guaranteedCol]);
@@ -2079,6 +2084,7 @@ function submitAddPlayer(){
     if(!name){err.textContent="Enter the player's name."; return;}
     if(ST.active.some(p=>p["Player"]===name)){err.textContent="A player with that name is already on the roster."; return;}
     const pick=parseInt($("draftPick").value);
+    if(isNaN(pick)||pick<1||pick>ROOKIE_SCALE.length){err.textContent="Enter a pick from 1 to "+ROOKIE_SCALE.length+"."; return;}
     const startIdx=parseInt($("draftYear").value)||0;
     const dict=buildRookieContract(name,pick,startIdx);
     if(!dict || !ST.yearCols.some(yc=>parseSalary(dict[yc]))){
