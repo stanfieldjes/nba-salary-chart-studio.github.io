@@ -221,6 +221,14 @@
   .add-panel .ap-err{color:var(--red); font-size:10.5px; min-height:13px; margin-top:5px;}
   .add-panel .ap-btns{display:flex; gap:8px; margin-top:10px;}
   .add-panel .ap-btns button{flex:1; padding:6px 0; font-size:12px; font-weight:600;}
+  /* mode toggle: From league / Draft pick */
+  .add-panel .ap-mode{display:flex; gap:6px; margin-bottom:6px;}
+  .add-panel .ap-mode button{flex:1; padding:5px 0; font-size:11px; font-weight:600;
+    color:var(--subtext); background:var(--sidebar); border:1px solid var(--line); border-radius:5px;}
+  .add-panel .ap-mode button.on{color:#fff; background:var(--accent); border-color:var(--accent);}
+  .add-panel input[type=text]{width:100%; background:var(--card); color:var(--text);
+    border:1px solid var(--line); border-radius:5px; padding:5px 8px; font:inherit; font-size:12px;}
+  .add-panel input[type=text]:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
 
   /* Inline extension salary entry (rendered inside a player card) */
   .inline-form{margin-top:9px; padding-top:9px; border-top:1px solid var(--line);}
@@ -262,6 +270,14 @@
   .ysum-cell .ys-status{flex:1; font-family:'Segoe UI',Arial,sans-serif; font-weight:600; font-size:11px;}
   .ysum-cell .ys-tot{color:var(--subtext); width:54px; text-align:right;}
   .ys-body{padding:4px 10px 9px; border-top:1px solid var(--line);}
+  .ys-growth{display:flex; align-items:center; gap:6px; margin:6px 0 4px;}
+  .ys-growth .ysg-lbl{flex:1; color:var(--subtext); font-size:10px;
+    text-transform:uppercase; letter-spacing:.3px;}
+  .ys-growth .ysg-inp{width:54px; background:var(--card); color:var(--text);
+    border:1px solid var(--line); border-radius:5px; padding:3px 6px; font:inherit;
+    font-size:11px; text-align:right;}
+  .ys-growth .ysg-inp:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
+  .ys-growth .ysg-pct{color:var(--subtext); font-size:11px;}
   .ys-body .ys-bsub{color:var(--subtext); font-size:10px; margin:3px 0 5px;}
   .yt-table{border-collapse:collapse; font:11px/1.5 Consolas,Menlo,monospace;}
   .yt-lbl{color:var(--text); padding:1px 12px 1px 0; white-space:nowrap;}
@@ -416,14 +432,90 @@ const GREEN=C("--green"), RED=C("--red"), YELLOW=C("--yellow"),
       BLUE=C("--blue"), PURPLE=C("--purple"), SUBTEXT=C("--subtext"), TEXT=C("--text");
 const BODYF="'Segoe UI','Helvetica Neue',Arial,sans-serif";
 
-const THRESHOLDS={
-  2025:[154.647,187.895,195.945,207.824], 2026:[165.000,201.000,209.000,222.000],
-  2027:[173.250,210.499,219.481,232.789], 2028:[181.913,221.024,230.455,244.428],
-  2029:[191.009,232.076,241.979,256.651], 2030:[201.774,245.155,255.616,271.115],
-  2031:[211.863,257.414,268.398,284.672], 2032:[222.456,270.284,281.817,298.904],
-  2033:[233.579,283.798,295.908,313.849], 2034:[245.258,297.988,310.703,329.542],
-};
+/* ── Cap / tax / apron model ──────────────────────────────────────────
+   2025-26 values are the real, published figures (the base year). Every
+   later year is derived by compounding the previous year's [cap, tax,
+   1st apron, 2nd apron] by a user-editable growth % (default 6.7%, set
+   per-year in the YEARLY SUMMARY panel). THRESHOLDS is rebuilt from these
+   inputs by recomputeThresholds() and is what the rest of the app reads. */
+const BASE_YEAR=2025;
+const BASE_THRESHOLDS=[154.647,187.895,195.945,207.824];  // 2025-26 cap, tax, apron1, apron2
+const DEFAULT_GROWTH=6.7;     // default year-over-year increase, in %
+const LAST_YEAR=2034;         // build the table out to here
+// year -> growth % applied to get THAT year's values from the prior year.
+// Editable via the yearly-summary controls; missing years fall back to default.
+const GROWTH={};
+function growthFor(year){
+  return (GROWTH[year]!==undefined && !isNaN(GROWTH[year])) ? GROWTH[year] : DEFAULT_GROWTH;
+}
+let THRESHOLDS={};
+function recomputeThresholds(){
+  const out={}; out[BASE_YEAR]=BASE_THRESHOLDS.slice();
+  for(let y=BASE_YEAR+1; y<=LAST_YEAR; y++){
+    const prev=out[y-1], f=1+growthFor(y)/100;
+    out[y]=prev.map(v=>v*f);
+  }
+  THRESHOLDS=out;
+  return out;
+}
+recomputeThresholds();
 const FLOOR_PCT=0.90;   // salary floor = 90% of the cap
+
+/* ── Rookie scale (1st-round picks) ───────────────────────────────────
+   2025-26 figures at 120% of scale (the league norm for nearly every
+   pick). Each pick is a four-season deal in a "2 guaranteed, 2 option"
+   format: Year 1 & 2 are guaranteed, Year 3 & 4 are team options.
+   Values for a draft class entering in a later year scale up by the same
+   compounded growth % used for the cap (relative to the 2025 base year),
+   so a pick in 2027-28 uses the 2025 base inflated two years. Index 0 is
+   pick #1. Each row: [Year1, Year2, Year3(opt), Year4(opt)]. */
+const ROOKIE_SCALE_BASE_YEAR=2025;
+const ROOKIE_SCALE=[
+  [13825920,14517480,15208680,19178146], // 1
+  [12370320,12989040,13607760,17172994], // 2
+  [11108880,11663880,12219840,15445878], // 3
+  [10015680,10516560,11017560,13937214], // 4
+  [9069840, 9523080, 9976560, 12640302], // 5
+  [8237640, 8649600, 9061680, 11490211], // 6
+  [7520040, 7896240, 8271960, 10505389], // 7
+  [6889200, 7233720, 7578240, 9639522],  // 8
+  [6332520, 6649560, 6966000, 8874684],  // 9
+  [6016080, 6316680, 6617160, 8436880],  // 10
+  [5715120, 6001080, 6286920, 8342743],  // 11
+  [5429520, 5701200, 5972760, 8230464],  // 12
+  [5157960, 5416080, 5673840, 8107918],  // 13
+  [4900320, 5145360, 5390640, 7983539],  // 14
+  [4655040, 4887720, 5120400, 7849573],  // 15
+  [4422360, 4643520, 4864920, 7462788],  // 16
+  [4201080, 4411200, 4621200, 7098163],  // 17
+  [3991320, 4190520, 4390320, 6752312],  // 18
+  [3811560, 4002000, 4193040, 6457282],  // 19
+  [3658800, 3841680, 4024440, 6205687],  // 20
+  [3512520, 3688320, 3864000, 6155352],  // 21
+  [3372240, 3540600, 3709320, 6101832],  // 22
+  [3237480, 3399480, 3560880, 6042814],  // 23
+  [3108120, 3263400, 3418800, 5979481],  // 24
+  [2983320, 3132360, 3282000, 5910882],  // 25
+  [2884560, 3028560, 3172920, 5720776],  // 26
+  [2801280, 2941440, 3081840, 5559640],  // 27
+  [2783880, 2923560, 3062640, 5528065],  // 28
+  [2763960, 2902080, 3040320, 5487778],  // 29
+  [2743800, 2880960, 3018480, 5448356],  // 30
+];
+// Compounded growth factor from the 2025 base year up to `year` (the season
+// the rookie class enters), using the same per-year GROWTH the cap uses.
+function rookieGrowthFactor(year){
+  let f=1;
+  for(let y=ROOKIE_SCALE_BASE_YEAR+1; y<=year; y++) f*=1+growthFor(y)/100;
+  return f;
+}
+// Four scaled salaries [Y1,Y2,Y3opt,Y4opt] for a given pick (1-based) entering
+// in the given calendar start year (e.g. 2026 for the 2026-27 season).
+function rookieSalaries(pick, enterYear){
+  const row=ROOKIE_SCALE[pick-1]; if(!row) return null;
+  const f=rookieGrowthFactor(enterYear);
+  return row.map(v=>v*f);
+}
 
 // ── Single source of truth for the threshold colour system ────────────
 // Each tier line, top to bottom. `val(t)` extracts the dollar value (in $M)
@@ -1202,7 +1294,21 @@ function refreshTotals(){
     cell.appendChild(head);
     if(expanded && r.breakdown){
       const body=document.createElement("div"); body.className="ys-body";
-      let rows=`<div class="ys-bsub">${r.players}/15 players</div><table class="yt-table"><tbody>`;
+      const yr=parseInt(r.yc);
+      // Growth control: every year except the fixed 2025-26 base year derives
+      // its cap/tax/aprons from the prior year by this %.
+      let growthHTML="";
+      if(yr>BASE_YEAR){
+        growthHTML=
+          `<div class="ys-growth">`+
+            `<span class="ysg-lbl">Increase vs prior year</span>`+
+            `<input type="number" step="0.1" class="ysg-inp" id="growth-${yr}" value="${growthFor(yr).toFixed(1)}">`+
+            `<span class="ysg-pct">%</span>`+
+          `</div>`;
+      }else{
+        growthHTML=`<div class="ys-growth"><span class="ysg-lbl">Base year (actual values)</span></div>`;
+      }
+      let rows=growthHTML+`<div class="ys-bsub">${r.players}/15 players</div><table class="yt-table"><tbody>`;
       for(const b of r.breakdown){
         const over=b.value>=0, sign=over?"+":"", dot=tierLineColor(b.label);
         rows+=`<tr><td class="yt-lbl"><span class="yt-dot" style="background:${dot}"></span>${b.label}</td>`+
@@ -1211,6 +1317,17 @@ function refreshTotals(){
       }
       rows+=`</tbody></table>`;
       body.innerHTML=rows;
+      if(yr>BASE_YEAR){
+        const inp=body.querySelector(`#growth-${yr}`);
+        // Editing one year recompounds every later year too, so redraw fully.
+        inp.onchange=()=>{
+          const v=parseFloat(inp.value);
+          if(isNaN(v)) { delete GROWTH[yr]; } else { GROWTH[yr]=v; }
+          recomputeThresholds(); refreshTotals(); redrawChart();
+        };
+        // Don't let a click on the input collapse the cell.
+        inp.onclick=e=>e.stopPropagation();
+      }
       cell.appendChild(body);
     }
     box.appendChild(cell);
@@ -1403,38 +1520,64 @@ function rebuildSidebar(){
     rl.appendChild(card);
   }
 
-  // "add player from another team" — toggles an inline panel (no pop-up)
+  // "add player" — toggles an inline panel (no pop-up)
   const add=document.createElement("div"); add.className="rost-add"+(addPlayerOpen?" open":"");
-  add.innerHTML=`<span class="ra-plus">${addPlayerOpen?"×":"+"}</span><span class="ra-label">Add player from another team</span>`;
+  add.innerHTML=`<span class="ra-plus">${addPlayerOpen?"×":"+"}</span><span class="ra-label">Add player (league or draft)</span>`;
   add.onclick=()=>{ addPlayerOpen?closeAddPlayer():openAddPlayerPanel(); };
   rl.appendChild(add);
 
   if(addPlayerOpen){
     rl.appendChild(buildAddPlayerPanel());
-    // populate the freshly-built selects
-    rebuildAddPlayerTeams();
+    // populate the freshly-built selects for whichever mode is active
+    if(addPlayerMode==="draft") rebuildDraftControls();
+    else rebuildAddPlayerTeams();
   }
 }
 
-/* Build the inline add-player panel DOM (same controls the modal used,
-   keeping the original element IDs so existing handlers keep working). */
+/* Build the inline add-player panel DOM. Two modes: add an existing player
+   from another team (the original behavior) or add a drafted rookie whose
+   salary comes from the rookie scale. The mode toggle swaps which block of
+   controls is shown; element IDs are preserved so existing handlers work. */
 function buildAddPlayerPanel(){
   const wrap=document.createElement("div"); wrap.className="add-panel";
+  const leagueOn=addPlayerMode==="league";
   wrap.innerHTML=
-    `<div class="ap-title">Add player from another team</div>`+
-    `<div class="ap-label">From team</div><select id="addPlayerTeam"></select>`+
-    `<div class="ap-label">Player</div><select id="addPlayerSelect"></select>`+
-    `<div class="ap-label">Join in season</div><select id="addPlayerYear"></select>`+
+    `<div class="ap-title">Add player</div>`+
+    `<div class="ap-mode">`+
+      `<button id="apModeLeague" class="${leagueOn?"on":""}">From league</button>`+
+      `<button id="apModeDraft" class="${leagueOn?"":"on"}">Draft pick</button>`+
+    `</div>`+
+    // ── League block ──
+    `<div id="apLeague" style="display:${leagueOn?"block":"none"}">`+
+      `<div class="ap-label">From team</div><select id="addPlayerTeam"></select>`+
+      `<div class="ap-label">Player</div><select id="addPlayerSelect"></select>`+
+      `<div class="ap-label">Join in season</div><select id="addPlayerYear"></select>`+
+    `</div>`+
+    // ── Draft block ──
+    `<div id="apDraft" style="display:${leagueOn?"none":"block"}">`+
+      `<div class="ap-label">Player name</div>`+
+      `<input type="text" id="draftName" placeholder="e.g. Cooper Flagg" autocomplete="off">`+
+      `<div class="ap-label">Pick</div><select id="draftPick"></select>`+
+      `<div class="ap-label">Rookie season</div><select id="draftYear"></select>`+
+    `</div>`+
     `<div class="ap-preview" id="addPlayerPreview"></div>`+
     `<div class="ap-err" id="addPlayerErr"></div>`+
     `<div class="ap-btns">`+
       `<button id="addPlayerCancel">Cancel</button>`+
       `<button class="b-green" id="addPlayerSubmit">Add to roster</button>`+
     `</div>`;
-  // wire handlers (the panel is rebuilt on each rebuildSidebar, so re-bind)
+  // mode toggle
+  wrap.querySelector("#apModeLeague").onclick=()=>{ if(addPlayerMode!=="league"){addPlayerMode="league"; rebuildSidebar(); rebuildAddPlayerTeams();} };
+  wrap.querySelector("#apModeDraft").onclick=()=>{ if(addPlayerMode!=="draft"){addPlayerMode="draft"; rebuildSidebar(); rebuildDraftControls();} };
+  // league handlers
   wrap.querySelector("#addPlayerTeam").onchange=rebuildAddPlayerList;
   wrap.querySelector("#addPlayerSelect").onchange=()=>rebuildAddPlayerYears();
   wrap.querySelector("#addPlayerYear").onchange=updateAddPlayerPreview;
+  // draft handlers
+  wrap.querySelector("#draftName").oninput=updateDraftPreview;
+  wrap.querySelector("#draftPick").onchange=updateDraftPreview;
+  wrap.querySelector("#draftYear").onchange=updateDraftPreview;
+  // shared
   wrap.querySelector("#addPlayerCancel").onclick=closeAddPlayer;
   wrap.querySelector("#addPlayerSubmit").onclick=submitAddPlayer;
   return wrap;
@@ -1608,7 +1751,11 @@ addEventListener("dragover",e=>e.preventDefault());
 addEventListener("drop",e=>{e.preventDefault();dragDepth=0;document.body.classList.remove("dragging");
   const f=e.dataTransfer.files[0]; if(f) ingestCSVFile(f);});
 
-$("resetBtn").onclick=()=>{if(ST){ST.resetMoves(); rebuildSidebar(); redrawChart();}};
+$("resetBtn").onclick=()=>{if(ST){
+  for(const k of Object.keys(GROWTH)) delete GROWTH[k];   // back to default 6.7%
+  recomputeThresholds();
+  ST.resetMoves(); rebuildSidebar(); redrawChart();
+}};
 $("exportBtn").onclick=()=>{if(ST) exportPNG(ST);};
 
 /* ── Light / dark theme toggle ── */
@@ -1753,12 +1900,14 @@ function clearSelection(){
 
 /* ── Add Player (inline panel) ── */
 let addPlayerCache=[];   // players for the currently-selected source team
+let addPlayerMode="league";   // "league" (from another team) or "draft" (rookie scale)
 function otherTeamNames(){
   return Object.keys(TEAMS).filter(t=>t!==ST.teamName);
 }
 function openAddPlayerPanel(){
   if(!ST) return;
-  if(!otherTeamNames().length){alert("No other teams loaded. Add more team CSVs first."); return;}
+  // Draft mode needs no other teams; only force draft if none are available.
+  if(!otherTeamNames().length) addPlayerMode="draft";
   addPlayerOpen=true;
   rebuildSidebar();
   // scroll the panel into view once it's in the DOM
@@ -1862,8 +2011,83 @@ function updateAddPlayerPreview(){
 }
 // Handlers are bound inside buildAddPlayerPanel (the panel is rebuilt on each
 // rebuildSidebar). submitAddPlayer adds the player and closes the panel.
+
+/* ── Draft pick mode ──
+   Populate the pick (1–30) and rookie-season selects, then build a rookie-scale
+   contract: four consecutive seasons starting at the chosen entry year, with
+   years 1–2 guaranteed and years 3–4 as team options. */
+function rebuildDraftControls(){
+  const psel=$("draftPick"); if(!psel) return;
+  if(!psel.options.length){
+    for(let p=1;p<=ROOKIE_SCALE.length;p++){
+      const o=document.createElement("option"); o.value=p; o.textContent="Pick #"+p; psel.appendChild(o);}
+    psel.value=1;
+  }
+  const ysel=$("draftYear");
+  if(!ysel.options.length){
+    // Rookie season can be any charted season (the deal runs 4 years from there;
+    // seasons past the chart's end are simply not shown).
+    ST.yearCols.forEach((yc,idx)=>{const o=document.createElement("option"); o.value=idx; o.textContent=yc; ysel.appendChild(o);});
+    ysel.value=0;
+  }
+  updateDraftPreview();
+}
+/* Build a rookie contract dict ({Player, Age, <year>…, Guaranteed}) for a pick
+   entering at startYearIdx. Years 1–2 are guaranteed; years 3–4 are options, so
+   Guaranteed is set to the sum of the first two on-chart seasons — which makes
+   RosterState.determineOption flag years 3 & 4 as options automatically. */
+function buildRookieContract(name, pick, startYearIdx){
+  const enterYear=parseInt(ST.yearCols[startYearIdx]);   // e.g. 2026
+  const sals=rookieSalaries(pick, enterYear);            // [Y1,Y2,Y3opt,Y4opt]
+  if(!sals) return null;
+  const dict={"Player":name||("Pick #"+pick),"Age":""};
+  for(const yc of ST.yearCols) dict[yc]="";
+  let guaranteed=0;
+  for(let k=0;k<4;k++){
+    const idx=startYearIdx+k;
+    if(idx>=ST.yearCols.length) break;                   // runs past the chart → drop
+    const yc=ST.yearCols[idx];
+    dict[yc]="$"+Math.round(sals[k]).toLocaleString("en-US");
+    if(k<2) guaranteed+=Math.round(sals[k]);             // first two years guaranteed
+  }
+  dict[ST.guaranteedCol]="$"+guaranteed.toLocaleString("en-US");
+  return dict;
+}
+function updateDraftPreview(){
+  const box=$("addPlayerPreview"); if(!box) return;
+  const name=($("draftName").value||"").trim();
+  const pick=parseInt($("draftPick").value);
+  const startIdx=parseInt($("draftYear").value)||0;
+  const dict=buildRookieContract(name,pick,startIdx);
+  if(!dict){box.textContent=""; return;}
+  const guar=parseSalary(dict[ST.guaranteedCol]);
+  const parts=ST.yearCols.map(yc=>{
+    const s=parseSalary(dict[yc]); if(!s) return null;
+    // option = a season beyond the guaranteed total (years 3–4)
+    let run=0,opt=false;
+    for(const y of ST.yearCols){const v=parseSalary(dict[y]); if(v==null)continue; run+=v; if(y===yc){opt=run>guar+1; break;}}
+    return `${yc}: ${fmtM(s)}${opt?"  (option)":""}`;}).filter(Boolean);
+  const shown=ST.yearCols.filter(yc=>parseSalary(dict[yc])).length;
+  box.innerHTML="Rookie contract (2 guaranteed + 2 option):<br>"+(parts.join("<br>")||"(no seasons on chart)")
+    +(shown<4?`<br><span style="color:var(--orange)">${4-shown} season(s) fall past the chart's end</span>`:"");
+}
+
 function submitAddPlayer(){
   const err=$("addPlayerErr"); err.textContent="";
+  if(addPlayerMode==="draft"){
+    const name=($("draftName").value||"").trim();
+    if(!name){err.textContent="Enter the player's name."; return;}
+    if(ST.active.some(p=>p["Player"]===name)){err.textContent="A player with that name is already on the roster."; return;}
+    const pick=parseInt($("draftPick").value);
+    const startIdx=parseInt($("draftYear").value)||0;
+    const dict=buildRookieContract(name,pick,startIdx);
+    if(!dict || !ST.yearCols.some(yc=>parseSalary(dict[yc]))){
+      err.textContent="That rookie season leaves no years on the chart. Pick an earlier season."; return;
+    }
+    ST.addPlayer(dict, "Draft");
+    addPlayerOpen=false; rebuildSidebar(); redrawChart();
+    return;
+  }
   const team=$("addPlayerTeam").value;
   const i=parseInt($("addPlayerSelect").value);
   if(isNaN(i)||i<0||!addPlayerCache[i]){err.textContent="Pick a player."; return;}
