@@ -120,6 +120,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     --chart-bar-top:#2C2C2C; --chart-bar-bot:#161616; --chart-name-col:#FFFFFF;
     --chart-hatch:rgba(150,150,150,0.55);
     --chart-floor:rgba(255,255,255,0.07);
+    /* Year-slider greys (dark) */
+    --ysl-fill:rgba(190,190,190,0.20); --ysl-fill-active:rgba(190,190,190,0.30);
+    --ysl-edge:#8A8A8A; --ysl-handle:#9A9A9A; --ysl-handle-grip:#1A1A1A;
   }
   /* Light theme override */
   body.light{
@@ -135,6 +138,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     --chart-bar-top:#EAEFF4; --chart-bar-bot:#CBD3DD; --chart-name-col:#1A1F26;
     --chart-hatch:rgba(90,100,115,0.55);
     --chart-floor:rgba(0,0,0,0.09);
+    /* Year-slider greys (light) */
+    --ysl-fill:rgba(70,80,90,0.16); --ysl-fill-active:rgba(70,80,90,0.26);
+    --ysl-edge:#8A929C; --ysl-handle:#6B7280; --ysl-handle-grip:#FFFFFF;
   }
   *{box-sizing:border-box; margin:0; padding:0;}
   html,body{height:100%;}
@@ -173,8 +179,54 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   }
   #sidebar::-webkit-scrollbar{width:9px;}
   #sidebar::-webkit-scrollbar-thumb{background:#3a3a3a; border-radius:5px;}
+  #chartcol{flex:1; min-width:0; display:flex; flex-direction:column;}
   #chartwrap{flex:1; min-width:0; position:relative; background:var(--chart-bg);}
   #chart{position:absolute; inset:10px; width:calc(100% - 20px); height:calc(100% - 20px); cursor:pointer;}
+
+  /* ── Year-range slider beneath the chart (custom, themed) ── */
+  #yearSliderBar{
+    flex:0 0 auto; display:flex; align-items:center; gap:14px;
+    padding:12px 24px 14px; background:var(--sidebar); border-top:1px solid var(--line);
+  }
+  #yearSlider{
+    position:relative; flex:1; height:42px; user-select:none; touch-action:none;
+  }
+  /* base rail */
+  #yearSlider .ysl-rail{
+    position:absolute; left:0; right:0; top:8px; height:24px; border-radius:7px;
+    background:var(--card); border:1px solid var(--line);
+  }
+  /* per-season tick segments live in here */
+  #yearSlider .ysl-ticks{position:absolute; left:0; right:0; top:8px; height:24px;}
+  #yearSlider .ysl-tick{
+    position:absolute; top:0; height:24px; display:flex; align-items:center; justify-content:center;
+    font:10px/1 Consolas,Menlo,monospace; color:var(--subtext); white-space:nowrap;
+    border-left:1px solid var(--line); cursor:pointer; overflow:hidden;
+  }
+  #yearSlider .ysl-tick:first-child{border-left:none;}
+  #yearSlider .ysl-tick.in-range{color:var(--text); font-weight:700;}
+  /* highlighted selection window — draggable to shift the whole range */
+  #yearSlider .ysl-fill{
+    position:absolute; top:8px; height:24px; border-radius:7px; cursor:grab;
+    background:var(--ysl-fill);
+    border:1px solid var(--ysl-edge); box-sizing:border-box; pointer-events:auto;
+  }
+  #yearSlider .ysl-fill:active{cursor:grabbing;}
+  #yearSlider.dragging-fill .ysl-fill{background:var(--ysl-fill-active);}
+  /* draggable end handles */
+  #yearSlider .ysl-handle{
+    position:absolute; top:2px; width:14px; height:36px; border-radius:6px;
+    background:var(--ysl-handle); border:1px solid var(--bg);
+    box-shadow:0 1px 4px rgba(0,0,0,.5); cursor:ew-resize; transform:translateX(-50%);
+    display:flex; align-items:center; justify-content:center; z-index:3;
+  }
+  #yearSlider .ysl-handle::before{
+    content:""; width:2px; height:16px; border-radius:2px;
+    background:var(--ysl-handle-grip); opacity:.8;
+  }
+  #yearSlider .ysl-handle:hover{filter:brightness(1.12);}
+  #yearSlider .ysl-handle:focus-visible{outline:2px solid var(--text); outline-offset:2px;}
+
 
   .section-h{
     display:flex; align-items:center; justify-content:space-between;
@@ -347,6 +399,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   /* Inline extension salary entry (rendered inside a player card) */
   .inline-form{margin-top:9px; padding-top:9px; border-top:1px solid var(--line);}
   .inline-form .if-title{font-size:11px; font-weight:700; color:var(--text); margin-bottom:6px;}
+  .inline-form .if-capnote{font-size:10px; color:var(--subtext); margin:-2px 0 7px; font-style:italic;}
   .inline-form .if-row{display:flex; align-items:center; gap:6px; margin:5px 0; font-size:11px;}
   .inline-form .if-row .ifr-yr{width:54px; font-weight:600; color:var(--text); font-family:Consolas,Menlo,monospace;}
   .inline-form .if-row input[type=number]{width:60px; background:var(--card); color:var(--text);
@@ -475,9 +528,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <h1>NBA Salary Chart <span class="tag">Studio</span></h1>
   <label class="bar-label" for="teamSelect">Team</label>
   <select id="teamSelect" aria-label="Team"></select>
-  <label class="bar-label" for="startYear">From</label>
-  <select id="startYear" aria-label="First season to display"></select>
   <span class="spacer"></span>
+  <button class="b-blue" id="saveStateBtn" title="Download the current team state as a .json file you can reload later">Save state</button>
+  <button class="b-purple" id="loadStateBtn" title="Load a previously saved team state (.json)">Load state</button>
+  <input type="file" id="loadStateInput" accept=".json,application/json" style="display:none">
   <button class="b-green" id="exportBtn">Export PNG</button>
 </div>
 
@@ -492,7 +546,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </div>
     <div class="collapse-body" id="optionsBody"><div id="rosterList"></div></div>
   </div>
-  <div id="chartwrap"><canvas id="chart"></canvas></div>
+  <div id="chartcol">
+    <div id="chartwrap"><canvas id="chart"></canvas></div>
+    <div id="yearSliderBar">
+      <div id="yearSlider">
+        <div class="ysl-rail"></div>
+        <div class="ysl-ticks" id="yslTicks"></div>
+        <div class="ysl-fill" id="yslFill" title="Drag to shift the selected range"></div>
+        <div class="ysl-handle" id="yslHandleLo" tabindex="0" role="slider" aria-label="First season"></div>
+        <div class="ysl-handle" id="yslHandleHi" tabindex="0" role="slider" aria-label="Last season"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <dialog id="extDialog">
@@ -557,7 +622,7 @@ const BODYF="'Segoe UI','Helvetica Neue',Arial,sans-serif";
 const BASE_YEAR=2025;
 const BASE_THRESHOLDS=[154.647,187.895,195.945,207.824];  // 2025-26 cap, tax, apron1, apron2
 const DEFAULT_GROWTH=6.7;     // default year-over-year increase, in %
-const LAST_YEAR=2034;         // build the table out to here
+const LAST_YEAR=2040;         // build the table out to here
 // year -> growth % applied to get THAT year's values from the prior year.
 // Editable via the yearly-summary controls; missing years fall back to default.
 const GROWTH={};
@@ -661,6 +726,15 @@ const REF_LINES=[["Salary Cap",0,"#20C940"],["Luxury Tax",1,"#C9B820"],
 
 /* ════ DATA LAYER ════ */
 function parseSalary(v){v=(v||"").trim().replace(/[$,]/g,""); return v?parseFloat(v):null;}
+/* Season-label helpers. A season column looks like "2025-26": its starting
+   calendar year is 2025. nextSeason("2025-26") → "2026-27". These let the app
+   build seasons past the documented range (e.g. extending into 2031-32). */
+function seasonStartYear(yc){const m=/^(\d{4})-\d{2}/.exec(yc); return m?parseInt(m[1]):NaN;}
+function seasonLabel(startYear){
+  const end=(startYear+1)%100;
+  return `${startYear}-${end.toString().padStart(2,"0")}`;
+}
+function nextSeason(yc){const y=seasonStartYear(yc); return isNaN(y)?null:seasonLabel(y+1);}
 function parseCSVText(text){
   const rows=[]; let row=[],cell="",inQ=false;
   for(let i=0;i<text.length;i++){const c=text[i];
@@ -707,7 +781,31 @@ class RosterState{
     this.optionStates=new Map(); this.extensions=new Map();
     this.extensionOptions=new Set(); this.extensionLabels=new Map();
     this.traded=new Map(); this.displayStart=0;
+    // Number of documented seasons (before any user-added future years). Seasons
+    // appended past this via extensions live in yearCols[origYearCount …].
+    this.origYearCount=yearCols.length;
+    // Last displayed season index (inclusive). Defaults to the last documented one.
+    this.displayEnd=yearCols.length-1;
     this.refreshOptions();
+  }
+  // Make sure yearCols runs at least as far as `yc`, appending consecutive
+  // seasons as needed so contracts can extend past the documented range.
+  ensureYearTo(yc){
+    if(this.yearCols.includes(yc)) return;
+    let last=this.yearCols[this.yearCols.length-1];
+    let guard=0;
+    while(last!==yc && guard++<60){
+      const nxt=nextSeason(last); if(!nxt) break;
+      this.yearCols.push(nxt); last=nxt;
+      if(nxt===yc) break;
+    }
+  }
+  // Append one new season to the end of the chart and return its label.
+  appendYear(){
+    const last=this.yearCols[this.yearCols.length-1];
+    const nxt=nextSeason(last); if(!nxt) return null;
+    this.yearCols.push(nxt);
+    return nxt;
   }
   refreshOptions(){
     // Re-derive the active roster + option list (call after adding/removing players).
@@ -736,7 +834,33 @@ class RosterState{
   }
   isAddedPlayer(name){return this.addedFrom.has(name);}
   key(n,y){return n+"|"+y;}
-  displayYears(){return this.yearCols.slice(this.displayStart);}
+  displayYears(){
+    const end=(this.displayEnd==null?this.yearCols.length-1:this.displayEnd);
+    return this.yearCols.slice(this.displayStart, end+1);
+  }
+  // Does this season have ANY salary on the books for ANY active player,
+  // respecting declines and trade cutoffs? Independent of the display window.
+  yearHasData(yc){
+    for(const p of this.active){
+      const name=p["Player"];
+      if(this.isYearRemoved(name,yc)) continue;
+      const k=this.key(name,yc);
+      const ext=this.extensions.get(k)??null;
+      if(this.isDeclined(name,yc)){
+        // a declined option only counts if re-signed via a non-option extension
+        if(ext!==null && !this.extensionOptions.has(k)) return true;
+        continue;
+      }
+      if(parseSalary(p[yc])!==null || ext!==null) return true;
+    }
+    return false;
+  }
+  // Index of the last season that has data (so trailing empty seasons are
+  // excluded from the slider). Returns -1 if nothing has data.
+  lastDataYearIdx(){
+    for(let i=this.yearCols.length-1;i>=0;i--) if(this.yearHasData(this.yearCols[i])) return i;
+    return -1;
+  }
   determineOption(p,yc){
     const sal=parseSalary(p[yc]); if(sal===null) return false;
     const guar=parseSalary(p[this.guaranteedCol]); if(guar===null) return true;
@@ -764,21 +888,45 @@ class RosterState{
       .some(([n,y])=>n===name && !this.isYearRemoved(n,y)
         && this.optionStates.get(this.key(n,y))==="pending");
   }
+  // Maximum number of NEW extension years a player may sign (flat 5-year limit).
+  EXT_CAP(name){ return 5; }
+  // How many extension years are already committed for this player.
+  extYearCount(name){
+    return [...this.extensions.keys()].filter(k=>k.startsWith(name+"|")).length;
+  }
+  // The player's last on-books contract year (CSV or extension), respecting
+  // declines and trade cutoffs. Returns null if they have no seasons on the books.
+  lastContractYear(name){
+    const p=this.active.find(q=>q["Player"]===name); if(!p) return null;
+    const filled=this.yearCols.filter(yc=>!this.isYearRemoved(name,yc) &&
+      ((parseSalary(p[yc])&&!this.isDeclined(name,yc))||this.extensions.has(this.key(name,yc))));
+    return filled.length?filled[filled.length-1]:null;
+  }
+  // A player can still be extended if they have a contract on the books, no
+  // pending option, and haven't yet used up their extension-year cap. Seasons
+  // can run past the documented range (extra seasons are appended on demand).
+  canExtend(name){
+    if(this.hasPendingOption(name)) return false;
+    if(this.lastContractYear(name)===null) return false;
+    return this.extYearCount(name) < this.EXT_CAP(name);
+  }
   expiringContracts(){
-    const last=this.yearCols[this.yearCols.length-1],out=[];
+    const out=[];
     for(const p of this.active){const name=p["Player"];
-      // A player with an unresolved (pending) option can't be extended until the
-      // option is accepted or declined first.
-      if(this.hasPendingOption(name)) continue;
-      const filled=this.yearCols.filter(yc=>!this.isYearRemoved(name,yc) &&
-        ((parseSalary(p[yc])&&!this.isDeclined(name,yc))||this.extensions.has(this.key(name,yc))));
-      if(!filled.length) continue;
-      const lastYr=filled[filled.length-1];
-      if(lastYr!==last){const sal=parseSalary(p[lastYr])??this.extensions.get(this.key(name,lastYr))??0; out.push([name,lastYr,sal]);}
+      if(!this.canExtend(name)) continue;
+      const lastYr=this.lastContractYear(name);
+      if(!lastYr) continue;
+      const sal=parseSalary(p[lastYr])??this.extensions.get(this.key(name,lastYr))??0;
+      out.push([name,lastYr,sal]);
     }
     out.sort((a,b)=>this.yearCols.indexOf(a[1])-this.yearCols.indexOf(b[1])); return out;
   }
   addExtension(name,year,salary,isOption,label){
+    // The season may run past the documented range — append it if needed.
+    this.ensureYearTo(year);
+    // Keep the visible window covering newly-signed seasons.
+    const yi=this.yearCols.indexOf(year);
+    if(yi>this.displayEnd) this.displayEnd=yi;
     // If a removal cutoff would hide this new season, lift it (extending past a
     // removed tail brings the player back on the books from here on).
     if(this.traded.has(name) &&
@@ -1013,6 +1161,48 @@ class RosterState{
     });
     return {acc,pen,dec,exts,added,trades};
   }
+  // ── Save / load ──────────────────────────────────────────────────────
+  // Capture everything needed to rebuild this exact state in a later session.
+  // The base roster is rebuilt from the embedded team CSV (referenced by name),
+  // so only user moves + acquired players + any future seasons are stored.
+  serialize(){
+    return {
+      _fmt:"nba-salary-state", _v:1,
+      teamName:this.teamName,
+      yearCols:this.yearCols.slice(),       // includes any seasons added past the docs
+      origYearCount:this.origYearCount,
+      guaranteedCol:this.guaranteedCol,
+      displayStart:this.displayStart,
+      displayEnd:this.displayEnd,
+      addedPlayers:this.addedPlayers,
+      addedFrom:[...this.addedFrom.entries()],
+      optionStates:[...this.optionStates.entries()],
+      extensions:[...this.extensions.entries()],
+      extensionOptions:[...this.extensionOptions],
+      extensionLabels:[...this.extensionLabels.entries()],
+      traded:[...this.traded.entries()],
+      growth:Object.entries(GROWTH),        // global cap-growth overrides
+    };
+  }
+  static restore(obj, csvText){
+    const st=new RosterState(csvText, obj.teamName);
+    if(Array.isArray(obj.yearCols) && obj.yearCols.length) st.yearCols=obj.yearCols.slice();
+    if(typeof obj.origYearCount==="number") st.origYearCount=obj.origYearCount;
+    if(obj.guaranteedCol) st.guaranteedCol=obj.guaranteedCol;
+    st.addedPlayers=Array.isArray(obj.addedPlayers)?obj.addedPlayers:[];
+    st.addedFrom=new Map(obj.addedFrom||[]);
+    st.optionStates=new Map(obj.optionStates||[]);
+    st.extensions=new Map(obj.extensions||[]);
+    st.extensionOptions=new Set(obj.extensionOptions||[]);
+    st.extensionLabels=new Map(obj.extensionLabels||[]);
+    st.traded=new Map(obj.traded||[]);
+    st.refreshOptions();
+    // Re-apply stored option decisions on top of any freshly-detected pending ones.
+    for(const [k,v] of (obj.optionStates||[])) st.optionStates.set(k,v);
+    st.displayStart=(typeof obj.displayStart==="number")?obj.displayStart:0;
+    st.displayEnd=(typeof obj.displayEnd==="number")?obj.displayEnd:st.yearCols.length-1;
+    return st;
+  }
 }
 
 /* ════ DARK CHART RENDERING (original style) ════ */
@@ -1220,147 +1410,20 @@ function renderChart(ctx,state,x0,y0,W,H,s){
   ctx.restore();
 }
 
-/* ════ PNG EXPORT (yearly summary + roster left · chart center · changes right) ════ */
+/* ════ PNG EXPORT (chart only, honoring the slider's year selection) ════ */
 function exportPNG(state){
   refreshTheme();
-  const TX=THEME.text, SUB=THEME.sub;
   const SC=2.5;
+  // renderChart draws exactly state.displayYears() (the slider window), so the
+  // export automatically reflects the user's From/To selection.
   const years=state.displayYears().filter(y=>state.chartData().has(y));
   const chartW=Math.max(1100,years.length*210)*SC, chartH=1200*SC;
-  const MONO="Consolas,Menlo,monospace";
-  const PAD=28*SC;
 
-  // ---- helper to draw a column of items, returns the max text width used ----
-  function measure(items){
-    const m=document.createElement("canvas").getContext("2d"); let w=0;
-    for(const it of items){
-      if(it.cols){ w=Math.max(w, it.cols.reduce((a,c)=>a+c.w,0)*SC); }
-      else { m.font=`${it.bold?"bold ":""}${it.size*SC}px ${MONO}`; w=Math.max(w,m.measureText(it.text).width); }
-    }
-    return w;
-  }
-  function drawItems(ctx,items,x0,y0){
-    let y=y0; ctx.textAlign="left"; ctx.textBaseline="top";
-    for(const it of items){
-      if(it.cols){
-        let cx=x0; ctx.font=`${(it.size||11.5)*SC}px ${MONO}`;
-        for(const col of it.cols){ ctx.fillStyle=col.color; ctx.fillText(col.text,cx,y); cx+=col.w*SC; }
-        y+=(it.size||11.5)*1.7*SC;
-      }else{
-        ctx.font=`${it.bold?"bold ":""}${it.size*SC}px ${MONO}`;
-        ctx.fillStyle=it.color; ctx.fillText(it.text,x0,y);
-        y+=(it.bold?it.size*1.85:it.size*1.5)*SC;
-      }
-    }
-    return y;
-  }
-  const H=(arr,t,c)=>arr.push({text:t,color:c||TX,size:14,bold:true});
-  const SUBH=(arr,t,c)=>arr.push({text:t,color:c||SUB,size:11,bold:true});
-  const LINE=(arr,t,c)=>arr.push({text:t,color:c||TX,size:11,bold:false});
-  const GAP=(arr)=>arr.push({text:"",color:TX,size:7,bold:false});
-  const ROW=(arr,cols,size)=>arr.push({cols,size});
-
-  // contiguous-year span helper → "2025-26 – 2028-29" or "2025-26"
-  const yspan=yrs=>{
-    if(!yrs.length) return "";
-    return yrs.length>1 ? `${yrs[0]} – ${yrs[yrs.length-1]}` : yrs[0];
-  };
-
-  // ---- LEFT: condensed yearly summary, then condensed roster ----
-  const left=[];
-  H(left,"YEARLY SUMMARY");
-  for(const r of state.yearlySummary()){
-    GAP(left);
-    ROW(left,[{text:r.yc,color:TX,w:60},
-              {text:r.status,color:STATUS_COLOR[r.status]||SUB,w:96},
-              {text:`$${r.total.toFixed(0)}M`,color:TX,w:64},
-              {text:`${r.players}/15`,color:SUB,w:50}]);
-  }
-  GAP(left); GAP(left);
-  H(left,"ROSTER");
-  for(const p of state.rosterSorted()){
-    const name=p["Player"]; const rows=state.contractRows(name);
-    if(!rows.length) continue;
-    let guarTot=0,optTot=0;
-    const guarYrs=[], optYrs=[];
-    for(const r of rows){ if(r.opt){optTot+=r.sal; optYrs.push(r.yc);} else {guarTot+=r.sal; guarYrs.push(r.yc);} }
-    // contract total: guaranteed, with option money appended via "+"
-    let tot=`$${(guarTot/1e6).toFixed(0)}M`; if(optTot>0) tot+=` +$${(optTot/1e6).toFixed(0)}M`;
-    // years under contract: guaranteed span, plus option years tagged with "+"
-    let yrsTxt=yspan(guarYrs);
-    if(optYrs.length){ yrsTxt += (yrsTxt?"  ":"") + optYrs.map(y=>"+"+y).join(" "); }
-    const from=state.addedFrom.get(name), traded=state.traded.get(name);
-    const tag=from?" ‹from "+from+"›":(traded?" ‹removed›":"");
-    GAP(left);
-    ROW(left,[{text:name+tag,color:TX,w:230},{text:tot,color:SUB,w:96}]);
-    ROW(left,[{text:"  "+yrsTxt,color:SUB,w:326}],10);
-  }
-
-  // ---- RIGHT: roster CHANGES only (acquired · removed · extensions) ----
-  const {exts,added,trades}=state.summarySections();
-  const right=[];
-  H(right,"ROSTER CHANGES");
-  const anyChange = added.length || trades.length || exts.length;
-  if(!anyChange){ GAP(right); LINE(right,"No changes yet.",SUB); }
-
-  if(added.length){
-    GAP(right); SUBH(right,"ACQUIRED",THEME.green||SUB);
-    for(const a of added){
-      const span=yspan(a.rows.map(r=>r.yc));
-      GAP(right);
-      ROW(right,[{text:a.name,color:TX,w:200},
-                 {text:`$${(a.total/1e6).toFixed(0)}M`,color:SUB,w:80}]);
-      ROW(right,[{text:`  from ${a.from} · ${span}`,color:SUB,w:300}],10);
-    }
-  }
-  if(trades.length){
-    GAP(right); SUBH(right,"REMOVED",THEME.accent||SUB);
-    for(const t of trades){
-      const off=t.rows.reduce((s,r)=>s+r.sal,0);
-      GAP(right);
-      ROW(right,[{text:t.name,color:TX,w:200},
-                 {text:`-$${(off/1e6).toFixed(0)}M`,color:SUB,w:80}]);
-      ROW(right,[{text:`  from ${t.fromYr} onward`,color:SUB,w:300}],10);
-    }
-  }
-  if(exts.length){
-    GAP(right); SUBH(right,"EXTENSIONS",THEME.accent||SUB);
-    // group extension rows by player
-    const byName=new Map();
-    for(const [n,y,s,isOpt] of exts){ if(!byName.has(n)) byName.set(n,[]); byName.get(n).push([y,s,isOpt]); }
-    for(const [n,list] of byName){
-      list.sort((a,b)=>state.yearCols.indexOf(a[0])-state.yearCols.indexOf(b[0]));
-      const tot=list.reduce((s,r)=>s+r[1],0);
-      GAP(right);
-      ROW(right,[{text:n,color:TX,w:200},
-                 {text:`+$${(tot/1e6).toFixed(0)}M`,color:SUB,w:80}]);
-      for(const [y,s,isOpt] of list){
-        const cap=THRESHOLDS[parseInt(y)]?THRESHOLDS[parseInt(y)][0]:null;
-        const pct=cap?`${((s/1e6)/cap*100).toFixed(0)}%`:"";
-        ROW(right,[{text:"  "+y,color:SUB,w:64},
-                   {text:`$${(s/1e6).toFixed(1)}M`,color:TX,w:70},
-                   {text:pct,color:SUB,w:44},
-                   {text:isOpt?"option":"",color:THEME.accent,w:60}],10);
-      }
-    }
-  }
-
-  const leftW=measure(left)+PAD*2;
-  const rightW=Math.max(measure(right)+PAD*2, 300*SC);
-  const c=document.createElement("canvas"); c.width=leftW+chartW+rightW; c.height=chartH;
+  const c=document.createElement("canvas"); c.width=chartW; c.height=chartH;
   const ctx=c.getContext("2d");
   ctx.fillStyle=THEME.bg; ctx.fillRect(0,0,c.width,c.height);
 
-  // chart in the centre
-  renderChart(ctx,state,leftW,0,chartW,chartH,SC);
-
-  // dividers
-  ctx.strokeStyle=THEME.legendLine; ctx.lineWidth=1*SC;
-  ctx.beginPath(); ctx.moveTo(leftW,40*SC); ctx.lineTo(leftW,chartH-40*SC); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(leftW+chartW,40*SC); ctx.lineTo(leftW+chartW,chartH-40*SC); ctx.stroke();
-
-  drawItems(ctx,left,PAD,46*SC);
-  drawItems(ctx,right,leftW+chartW+PAD,46*SC);
+  renderChart(ctx,state,0,0,chartW,chartH,SC);
 
   c.toBlob(blob=>{const a=document.createElement("a");
     a.href=URL.createObjectURL(blob); a.download=`${state.teamName}_salaries.png`; a.click();
@@ -1386,11 +1449,27 @@ let addPlayerOpen=false;   // is the inline "add player from another team" panel
 
 function redrawChart(){
   if(!ST) return;
+  syncYearSlider();
   activeTooltip = null;
   const r=canvas.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
   canvas.width=Math.max(1,Math.round(r.width*dpr));
   canvas.height=Math.max(1,Math.round(r.height*dpr));
   renderChart(cctx,ST,0,0,canvas.width,canvas.height,dpr*(r.width<900?0.85:1));
+}
+// Keep the slider's range in step with the data after any mutation. Cheap on the
+// hot path: only rebuilds the tick DOM when the number of data-bearing seasons
+// changed; otherwise it just re-clamps the window and repaints.
+let _yslLastCount=-1;
+function syncYearSlider(){
+  if(typeof yslCount!=="function" || !$("yslTicks")) return;
+  const n=yslCount();
+  const max=n-1;
+  let changed=false;
+  if(ST.displayEnd>max){ ST.displayEnd=max; changed=true; }
+  if(ST.displayStart>max){ ST.displayStart=Math.max(0,max); changed=true; }
+  if(ST.displayEnd<ST.displayStart){ ST.displayEnd=ST.displayStart; changed=true; }
+  if(n!==_yslLastCount){ _yslLastCount=n; rebuildYearSlider(); return; }
+  if(changed) paintYearSlider();
 }
 
 function refreshTotals(){
@@ -1729,21 +1808,26 @@ function buildAddPlayerPanel(){
 let inlineExtRows=[];   // working rows for the open extension form
 function capForYearM(yr){const t=THRESHOLDS[parseInt(yr)]; return (t?t[0]:154.647);}
 // The next season available to extend into = the season right after the player's
-// current last contracted year (their expiring year).
+// current last contracted year (their expiring year). Uses season-string math so
+// it works past the documented range.
 function extNextYear(name){
-  const exp=ST.expiringContracts().find(([n])=>n===name);
-  if(!exp) return null;
-  const i=ST.yearCols.indexOf(exp[1]);
-  return ST.yearCols[i+1]||null;
+  if(!ST.canExtend(name)) return null;
+  const lastYr=ST.lastContractYear(name);
+  if(!lastYr) return null;
+  return nextSeason(lastYr);
 }
 // The season following the last year currently staged in the open form (so the
-// form can offer consecutive years without committing first).
+// form can offer consecutive years without committing first). Returns null once
+// the player's extension-year cap (4 acquired / 5 own) would be exceeded.
 function extFormNextYear(name){
   const first=extNextYear(name); if(!first) return null;
-  if(!inlineExtRows.length) return first;
+  const committed=ST.extYearCount(name);
+  const staged=inlineExtRows.length;
+  // Cap is on the TOTAL number of extension years (committed + staged).
+  if(committed+staged >= ST.EXT_CAP(name)) return null;
+  if(!staged) return first;
   const lastYr=inlineExtRows[inlineExtRows.length-1].yr;
-  const i=ST.yearCols.indexOf(lastYr);
-  return ST.yearCols[i+1]||null;
+  return nextSeason(lastYr);
 }
 function buildExtendForm(name){
   const wrap=document.createElement("div"); wrap.className="inline-form";
@@ -1814,6 +1898,10 @@ function buildExtendForm(name){
       inlineExtRows.push({yr:moreYr, unit:"dollar", value:NaN, isOpt:false});
       rebuildSidebar(); };
     wrap.appendChild(more);
+  }else if(ST.extYearCount(name)+inlineExtRows.length >= ST.EXT_CAP(name)){
+    const lim=document.createElement("div"); lim.className="rc-addyear disabled";
+    lim.innerHTML=`<span class="ay-plus">•</span><span>Max ${ST.EXT_CAP(name)}-year extension reached</span>`;
+    wrap.appendChild(lim);
   }
 
   const err=document.createElement("div"); err.className="if-err"; wrap.appendChild(err);
@@ -1837,7 +1925,7 @@ function buildExtendForm(name){
       const asOption = isFinal && totalExtAtCommit>1 && er.isOpt;
       ST.addExtension(name,er.yr,v,asOption,label);
     }
-    inlineForm=null; inlineExtRows=[]; rebuildSidebar(); redrawChart();
+    inlineForm=null; inlineExtRows=[]; rebuildYearSlider(); rebuildSidebar(); redrawChart();
   };
   btns.appendChild(cancel); btns.appendChild(apply); wrap.appendChild(btns);
   return wrap;
@@ -1846,13 +1934,131 @@ function buildExtendForm(name){
 /* options collapse toggle */
 $("optHeader").onclick=()=>{optionsCollapsed=!optionsCollapsed; rebuildSidebar();};
 
-/* team + start-year selectors */
-function rebuildStartSelector(){
-  const sel=$("startYear"); sel.innerHTML="";
-  ST.yearCols.forEach((yc,i)=>{const o=document.createElement("option"); o.value=i; o.textContent=yc; sel.appendChild(o);});
-  sel.value=ST.displayStart;
+/* ── Year-range slider (custom) ──
+   The track is divided into one segment per season. The selection spans segments
+   [displayStart..displayEnd] inclusive. Two handles drag the edges (snapping to
+   segment boundaries); the highlighted middle can be dragged to shift the whole
+   window left/right while keeping its width. Also supports keyboard (arrows) and
+   clicking a tick to jump an edge. */
+const yslEl=$("yearSlider");
+// Number of seasons shown on the slider = up to and including the last season
+// that has data. Trailing empty seasons are excluded. Always at least 1.
+function yslCount(){ return Math.max(1, ST.lastDataYearIdx()+1); }
+function yslMax(){ return yslCount()-1; }   // last selectable season index
+function yslSegW(){ return yslEl.clientWidth / yslCount(); }
+// Pixel position of a segment boundary (0 = left of first season,
+// n = right of last season).
+function yslBoundaryX(i){ return i * yslSegW(); }
+// Nearest boundary index (0..n) for a pixel x within the track.
+function yslXToBoundary(x){
+  const n=yslCount();
+  let b=Math.round(x / yslSegW());
+  return Math.max(0, Math.min(n, b));
 }
-$("startYear").onchange=e=>{ST.displayStart=parseInt(e.target.value); refreshTotals(); redrawChart();};
+function rebuildYearSlider(){
+  const max=yslMax();
+  if(ST.displayStart>max) ST.displayStart=0;
+  if(ST.displayEnd==null||ST.displayEnd>max) ST.displayEnd=max;
+  if(ST.displayEnd<ST.displayStart) ST.displayEnd=ST.displayStart;
+  // (Re)build the per-season ticks — only seasons with data are shown.
+  const ticks=$("yslTicks"); ticks.innerHTML="";
+  const n=yslCount();
+  for(let i=0;i<n;i++){
+    const yc=ST.yearCols[i];
+    const t=document.createElement("div"); t.className="ysl-tick";
+    if(i>=ST.displayStart && i<=ST.displayEnd) t.classList.add("in-range");
+    t.style.left=(i/n*100)+"%"; t.style.width=(1/n*100)+"%";
+    // Compact label: drop the leading "20" so "2027-28" → "27-28".
+    t.textContent=yc.replace(/^20/,"");
+    t.title=yc;
+    t.onclick=()=>{
+      // Click a tick to move the nearer edge to it.
+      const distLo=Math.abs(i-ST.displayStart), distHi=Math.abs(i-ST.displayEnd);
+      if(distLo<=distHi) ST.displayStart=Math.min(i,ST.displayEnd);
+      else ST.displayEnd=Math.max(i,ST.displayStart);
+      paintYearSlider(); refreshTotals(); redrawChart();
+    };
+    ticks.appendChild(t);
+  }
+  paintYearSlider();
+}
+function paintYearSlider(){
+  const n=yslCount();
+  const a=ST.displayStart, b=Math.min(ST.displayEnd, yslMax());
+  const leftPct=(a/n)*100, rightPct=((b+1)/n)*100;
+  const fill=$("yslFill");
+  fill.style.left=leftPct+"%";
+  fill.style.width=(rightPct-leftPct)+"%";
+  $("yslHandleLo").style.left=leftPct+"%";
+  $("yslHandleHi").style.left=rightPct+"%";
+  // keep the in-range tick styling in sync without a full rebuild
+  const tk=$("yslTicks").children;
+  for(let i=0;i<tk.length;i++) tk[i].classList.toggle("in-range", i>=a && i<=b);
+}
+function commitYearWindow(a,b){
+  const max=yslMax();
+  a=Math.max(0,Math.min(a,max));
+  b=Math.max(0,Math.min(b,max));
+  if(a>b){const t=a;a=b;b=t;}
+  if(a===ST.displayStart && b===ST.displayEnd){ paintYearSlider(); return; }
+  ST.displayStart=a; ST.displayEnd=b;
+  paintYearSlider(); refreshTotals(); redrawChart();
+}
+
+// ── Pointer dragging ──
+let yslDrag=null;  // {mode:"lo"|"hi"|"fill", startX, origA, origB, width}
+function yslPointerX(e){
+  const r=yslEl.getBoundingClientRect();
+  return Math.max(0, Math.min(r.width, (e.clientX!=null?e.clientX:e.touches[0].clientX) - r.left));
+}
+function yslStart(mode,e){
+  e.preventDefault();
+  yslDrag={mode, startX:yslPointerX(e), origA:ST.displayStart, origB:ST.displayEnd,
+           width:ST.displayEnd-ST.displayStart};
+  if(mode==="fill") yslEl.classList.add("dragging-fill");
+  window.addEventListener("pointermove",yslMove);
+  window.addEventListener("pointerup",yslEnd,{once:true});
+}
+function yslMove(e){
+  if(!yslDrag) return;
+  const x=yslPointerX(e);
+  if(yslDrag.mode==="lo"){
+    const bnd=yslXToBoundary(x);                 // boundary 0..n
+    commitYearWindow(Math.min(bnd, ST.displayEnd), ST.displayEnd);
+  }else if(yslDrag.mode==="hi"){
+    const bnd=yslXToBoundary(x)-1;               // right boundary → last included segment
+    commitYearWindow(ST.displayStart, Math.max(bnd, ST.displayStart));
+  }else{ // fill: shift whole window by whole segments
+    const deltaSeg=Math.round((x - yslDrag.startX)/yslSegW());
+    const n=yslCount();
+    let a=yslDrag.origA+deltaSeg, b=yslDrag.origB+deltaSeg;
+    if(a<0){ b-=a; a=0; }
+    if(b>n-1){ a-=(b-(n-1)); b=n-1; }
+    commitYearWindow(a,b);
+  }
+}
+function yslEnd(){
+  yslDrag=null; yslEl.classList.remove("dragging-fill");
+  window.removeEventListener("pointermove",yslMove);
+}
+$("yslHandleLo").addEventListener("pointerdown",e=>yslStart("lo",e));
+$("yslHandleHi").addEventListener("pointerdown",e=>yslStart("hi",e));
+$("yslFill").addEventListener("pointerdown",e=>yslStart("fill",e));
+
+// ── Keyboard support on handles ──
+function yslKey(which,e){
+  const d=(e.key==="ArrowLeft"||e.key==="ArrowDown")?-1:
+          (e.key==="ArrowRight"||e.key==="ArrowUp")?1:0;
+  if(!d) return;
+  e.preventDefault();
+  if(which==="lo") commitYearWindow(ST.displayStart+d, ST.displayEnd);
+  else commitYearWindow(ST.displayStart, ST.displayEnd+d);
+}
+$("yslHandleLo").addEventListener("keydown",e=>yslKey("lo",e));
+$("yslHandleHi").addEventListener("keydown",e=>yslKey("hi",e));
+
+// Keep handle/fill geometry correct when the window is resized.
+window.addEventListener("resize",()=>{ if(ST) paintYearSlider(); });
 
 function loadTeam(name, csvText){
   let st;
@@ -1860,7 +2066,8 @@ function loadTeam(name, csvText){
   catch(err){ alert("Could not parse CSV:\n"+err.message); return; }
   ST=st; optionsCollapsed=false;
   expandedPlayers.clear(); expandedYears=new Set(); removeMode=new Set(); inlineForm=null; addPlayerOpen=false;
-  rebuildStartSelector(); rebuildSidebar(); redrawChart();
+  _yslLastCount=-1;
+  rebuildYearSlider(); rebuildSidebar(); redrawChart();
 }
 function rebuildTeamSelector(selected){
   const sel=$("teamSelect"); sel.innerHTML="";
@@ -1871,6 +2078,44 @@ function rebuildTeamSelector(selected){
 $("teamSelect").onchange=e=>loadTeam(e.target.value);
 
 $("exportBtn").onclick=()=>{if(ST) exportPNG(ST);};
+
+/* ── Save / load current team state ── */
+$("saveStateBtn").onclick=()=>{
+  if(!ST) return;
+  const blob=new Blob([JSON.stringify(ST.serialize(),null,2)],{type:"application/json"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=`${ST.teamName}_state.json`;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+};
+$("loadStateBtn").onclick=()=>$("loadStateInput").click();
+$("loadStateInput").onchange=e=>{
+  const file=e.target.files&&e.target.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    let obj;
+    try{ obj=JSON.parse(reader.result); }
+    catch(err){ alert("That file isn't valid JSON."); return; }
+    if(!obj || obj._fmt!=="nba-salary-state"){ alert("That doesn't look like a saved team state."); return; }
+    const csv = TEAMS[obj.teamName] ? TEAMS[obj.teamName].csv : null;
+    if(!csv){ alert(`The saved team "${obj.teamName}" isn't in this build. Re-generate the app with that team's CSV, then load again.`); return; }
+    let st;
+    try{ st=RosterState.restore(obj, csv); }
+    catch(err){ alert("Could not load that state:\n"+err.message); return; }
+    // Restore global cap-growth overrides, then rebuild the threshold table.
+    for(const k of Object.keys(GROWTH)) delete GROWTH[k];
+    if(Array.isArray(obj.growth)) for(const [y,v] of obj.growth) GROWTH[y]=v;
+    recomputeThresholds();
+    ST=st; optionsCollapsed=false;
+    expandedPlayers.clear(); expandedYears=new Set(); removeMode=new Set(); inlineForm=null; addPlayerOpen=false;
+    _yslLastCount=-1;
+    rebuildTeamSelector(obj.teamName);
+    rebuildYearSlider(); rebuildSidebar(); redrawChart();
+  };
+  reader.readAsText(file);
+  e.target.value="";   // allow re-loading the same file later
+};
 
 /* Chart colours are read once from the (dark) CSS theme. */
 refreshTheme();
