@@ -2878,7 +2878,7 @@ function populateDraftYears(ysel){
   const prev=ysel.value;
   ysel.innerHTML="";
   const dopts=draftYearOptions();
-  for(const o of dopts){const op=document.createElement("option"); op.value=o.season; op.textContent=o.year+" draft"; ysel.appendChild(op);}
+  for(const o of dopts){const op=document.createElement("option"); op.value=o.season; op.textContent=o.year; ysel.appendChild(op);}
   if(!dopts.length){const op=document.createElement("option"); op.value=""; op.textContent="(no draft years)"; ysel.appendChild(op);}
   if(prev!=null && prev!=="") ysel.value=prev;
   else ysel.value=dopts.length?dopts[0].season:"";
