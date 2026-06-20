@@ -28,6 +28,12 @@ import re
 import sys
 
 
+# The league-wide roster file produced by fetch_csv_data.py. It lives alongside
+# the per-team salary CSVs but is NOT a team salary file, so team discovery
+# skips it and it's loaded separately to enrich the expanded player cards.
+PLAYERS_FILENAME = "players.csv"
+
+
 # ── CSV parsing (mirrors the app's own parser so embedded data is clean) ──────
 
 def parse_salary(value):
@@ -76,9 +82,11 @@ def discover_teams(folder):
                          f"Create it and drop one CSV per team inside "
                          f"(e.g. {folder}/OKC.csv).")
     teams = {}
-    files = sorted(f for f in os.listdir(folder) if f.lower().endswith(".csv"))
+    files = sorted(f for f in os.listdir(folder)
+                   if f.lower().endswith(".csv")
+                   and f.lower() != PLAYERS_FILENAME.lower())
     if not files:
-        raise SystemExit(f"No .csv files in {folder}. Add at least one team CSV.")
+        raise SystemExit(f"No team .csv files in {folder}. Add at least one team CSV.")
     for fn in files:
         label = os.path.splitext(fn)[0]
         try:
@@ -91,11 +99,52 @@ def discover_teams(folder):
     return teams
 
 
+def load_players(folder):
+    """Load the optional league-wide players.csv into a lookup the app embeds
+    for enriching expanded player cards.
+
+    Returns a dict keyed by player name → {team, position, height, weight, bday}.
+    Names are league-unique in practice; if the same name appears on two teams,
+    a "TEAM|Name" key is also added so the app can disambiguate. Missing file is
+    not an error — the app simply renders cards without the extra info strip.
+    """
+    path = os.path.join(folder, PLAYERS_FILENAME)
+    if not os.path.isfile(path):
+        print(f"  (no {PLAYERS_FILENAME} found — player info strips will be omitted)")
+        return {}
+
+    by_name = {}
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        count = 0
+        for row in reader:
+            name = (row.get("name") or "").strip()
+            if not name:
+                continue
+            info = {
+                "team":     (row.get("team") or "").strip(),
+                "position": (row.get("position") or "").strip(),
+                "height":   (row.get("height") or "").strip(),
+                "weight":   (row.get("weight") or "").strip(),
+                "bday":     (row.get("bday") or "").strip(),
+            }
+            by_name[name] = info
+            # Team-qualified key guards against duplicate names across teams.
+            if info["team"]:
+                by_name[f"{info['team']}|{name}"] = info
+            count += 1
+    print(f"  embedded player info ({count} players from {PLAYERS_FILENAME})")
+    return by_name
+
+
 # ── HTML template ─────────────────────────────────────────────────────────────
 
-def build_html(teams):
+def build_html(teams, players=None):
     data_json = json.dumps(teams, ensure_ascii=False)
-    return HTML_TEMPLATE.replace("/*__TEAM_DATA__*/", data_json)
+    players_json = json.dumps(players or {}, ensure_ascii=False)
+    return (HTML_TEMPLATE
+            .replace("/*__TEAM_DATA__*/", data_json)
+            .replace("/*__PLAYER_DATA__*/", players_json))
 
 
 HTML_TEMPLATE = r"""<!DOCTYPE html>
@@ -307,6 +356,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     background:none;}
   .rc-rmhint{color:var(--red); font-size:10px; margin:5px 0 2px; font-style:italic;}
   .rost-body{padding:4px 10px 10px; border-top:1px solid var(--line);}
+  /* Player info strip — a single horizontal bio line above the salary rows. */
+  .rc-pinfo{display:flex; align-items:center; gap:7px; flex-wrap:nowrap;
+    padding:5px 2px 6px; margin-bottom:3px; border-bottom:1px solid var(--line);
+    font:11px/1.3 'Segoe UI',Arial,sans-serif; white-space:nowrap; overflow:hidden;}
+  .rc-pinfo .pi-item{display:inline-flex; align-items:baseline; gap:4px; min-width:0;}
+  .rc-pinfo .pi-k{color:var(--subtext); font-size:9px; font-weight:600;
+    letter-spacing:.4px; text-transform:uppercase;}
+  .rc-pinfo .pi-v{color:var(--text); font-weight:600;}
+  .rc-pinfo .pi-sep{color:var(--subtext); opacity:.5;}
   .rc-year{display:flex; align-items:center; gap:6px; font:11px/1.7 Consolas,Menlo,monospace;}
   .rc-year .rcy-yr{color:var(--subtext); width:54px; flex:0 0 54px;}
   .rc-year .rcy-sal{color:var(--text); width:58px; flex:0 0 58px; text-align:right; font-weight:600;}
@@ -387,14 +445,52 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .add-panel input[type=text]{width:100%; background:var(--card); color:var(--text);
     border:1px solid var(--line); border-radius:5px; padding:5px 8px; font:inherit; font-size:12px;}
   .add-panel input[type=text]:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
-  /* season + pick on one row */
-  .add-panel .ap-draftrow{display:flex; gap:8px; align-items:flex-end;}
-  .add-panel .ap-draftrow .ap-col{flex:1;}
-  .add-panel .ap-draftrow .ap-col-pick{flex:0 0 84px;}
-  .add-panel .ap-draftrow .ap-label{margin-top:8px;}
-  .add-panel input[type=number]#draftPick{width:100%; background:var(--card); color:var(--text);
-    border:1px solid var(--line); border-radius:5px; padding:5px 8px; font:inherit; font-size:12px; text-align:center;}
-  .add-panel input[type=number]#draftPick:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
+  /* pick grid: 3 rows of 10 selectable boxes (1–30) */
+  .add-panel .ap-pickgrid{display:grid; grid-template-columns:repeat(10,1fr); gap:4px; margin:2px 0 2px;}
+  .add-panel .ap-pickcell{padding:5px 0; font-size:11px; font-weight:600; cursor:pointer;
+    color:var(--text); background:var(--sidebar); border:1px solid var(--line); border-radius:4px;
+    text-align:center; transition:background .1s,border-color .1s;}
+  .add-panel .ap-pickcell:hover{border-color:var(--accent); color:var(--accent);}
+  .add-panel .ap-pickcell.on{color:#fff; background:var(--accent); border-color:var(--accent);}
+  /* reworked add-player: league filter row, list, preview card */
+  .add-panel .ap-filterrow{display:flex; gap:8px; align-items:flex-end;}
+  .add-panel .ap-filterrow .ap-filtercol-team{flex:0 0 96px;}
+  .add-panel .ap-filterrow .ap-filtercol-search{flex:1;}
+  .add-panel .ap-list{margin-top:7px; max-height:188px; overflow-y:auto;
+    border:1px solid var(--line); border-radius:6px; background:var(--sidebar);}
+  .add-panel .ap-list::-webkit-scrollbar{width:8px;}
+  .add-panel .ap-list::-webkit-scrollbar-thumb{background:#3a3a3a; border-radius:5px;}
+  .add-panel .apl-row{display:flex; align-items:center; gap:7px; padding:5px 9px;
+    cursor:pointer; border-bottom:1px solid var(--line); font-size:11.5px;}
+  .add-panel .apl-row:last-child{border-bottom:none;}
+  .add-panel .apl-row:hover{background:rgba(94,168,237,0.12);}
+  .add-panel .apl-row.sel{background:rgba(94,168,237,0.20);}
+  .add-panel .apl-row .apl-name{flex:1; color:var(--text); white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis;}
+  .add-panel .apl-row .apl-pos{color:var(--subtext); font-size:9.5px; font-weight:600;
+    letter-spacing:.3px; flex:0 0 auto;}
+  .add-panel .apl-row .apl-team{color:var(--subtext); font-size:9.5px; font-weight:700;
+    letter-spacing:.4px; flex:0 0 30px; text-align:right;}
+  .add-panel .apl-empty{padding:10px; text-align:center; color:var(--subtext); font-size:10.5px;}
+  .add-panel .ap-hint{color:var(--subtext); font-size:10.5px; padding:4px 1px;}
+  /* preview card — mirrors a rostered player's card; staged contract is blue */
+  .add-panel .ap-card-prev{margin-top:9px; padding:8px 9px; border:1px dashed var(--accent);
+    border-radius:7px; background:rgba(94,168,237,0.06);}
+  .add-panel .apc-head{display:flex; align-items:center; gap:8px;
+    font:12px/1.3 'Segoe UI',Arial,sans-serif;}
+  .add-panel .apc-head .apc-name{flex:1; font-weight:700; color:var(--text);}
+  .add-panel .apc-head .apc-nameinp{flex:1; min-width:0; background:var(--card); color:var(--text);
+    border:1px solid var(--line); border-radius:5px; padding:4px 7px; font:inherit;
+    font-size:12px; font-weight:600;}
+  .add-panel .apc-head .apc-nameinp:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
+  .add-panel .apc-head .apc-nameinp::placeholder{color:var(--subtext); font-weight:400;}
+  .add-panel .apc-head .apc-total{color:var(--chart-name-col); font-weight:600;
+    font-family:Consolas,Menlo,monospace; font-size:11px;}
+  .add-panel .apc-yearrow{margin:7px 0 2px;}
+  .add-panel .apc-yearrow select{width:100%; font-size:12px; padding:5px 8px;}
+  .add-panel .ap-card-prev .rc-year{font:11px/1.6 Consolas,Menlo,monospace;}
+  .add-panel .apc-cbody{margin-top:5px;}
+  .add-panel .apc-note{color:var(--orange); font-size:10px; margin-top:4px;}
 
   /* Inline extension salary entry (rendered inside a player card) */
   .inline-form{margin-top:9px; padding-top:9px; border-top:1px solid var(--line);}
@@ -433,9 +529,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .ys-head:hover{filter:brightness(1.15);}
   .ys-chev{color:var(--subtext); font-size:10px; transition:transform .15s; display:inline-block;}
   .ysum-cell.open .ys-chev{transform:rotate(90deg);}
-  .ysum-cell .ys-yr{color:var(--text); width:52px;}
+  .ysum-cell .ys-yr{color:var(--chart-name-col); width:52px; font-weight:600;}
   .ysum-cell .ys-status{flex:1; font-family:'Segoe UI',Arial,sans-serif; font-weight:600; font-size:11px;}
-  .ysum-cell .ys-tot{color:var(--subtext); width:54px; text-align:right;}
+  .ysum-cell .ys-count{color:var(--subtext); text-align:right; opacity:.85;}
+  .ysum-cell .ys-tot{color:var(--text); width:54px; text-align:right;}
   .ys-body{padding:4px 10px 9px; border-top:1px solid var(--line);}
   .ys-growth{display:flex; align-items:center; gap:6px; margin:6px 0 4px;}
   .ys-growth .ysg-lbl{flex:1; color:var(--subtext); font-size:10px;
@@ -445,7 +542,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     font-size:11px; text-align:right;}
   .ys-growth .ysg-inp:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
   .ys-growth .ysg-pct{color:var(--subtext); font-size:11px;}
-  .ys-body .ys-bsub{color:var(--subtext); font-size:10px; margin:3px 0 5px;}
   .yt-table{border-collapse:collapse; font:11px/1.6 Consolas,Menlo,monospace; width:100%;}
   .yt-lbl{color:var(--text); padding:1px 12px 1px 0; white-space:nowrap;}
   .yt-dot{display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:6px; vertical-align:middle;}
@@ -587,6 +683,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 </dialog>
 
 <script id="teamData" type="application/json">/*__TEAM_DATA__*/</script>
+<script id="playerData" type="application/json">/*__PLAYER_DATA__*/</script>
 
 <script>
 "use strict";
@@ -807,6 +904,19 @@ class RosterState{
     this.yearCols.push(nxt);
     return nxt;
   }
+  // Drop empty trailing seasons that were appended past the original CSV range
+  // and hold no salary for any active player (used to undo a cancelled preview
+  // that extended the chart for a future draft pick).
+  trimEmptyTrailingYears(){
+    while(this.yearCols.length>this.origYearCount &&
+          this.yearCols.length>1 &&
+          !this.yearHasData(this.yearCols[this.yearCols.length-1])){
+      this.yearCols.pop();
+    }
+    const max=this.yearCols.length-1;
+    if(this.displayEnd>max) this.displayEnd=max;
+    if(this.displayStart>max) this.displayStart=Math.max(0,max);
+  }
   refreshOptions(){
     // Re-derive the active roster + option list (call after adding/removing players).
     this.active=this.basePlayers.concat(this.addedPlayers);
@@ -840,7 +950,11 @@ class RosterState{
   }
   // Does this season have ANY salary on the books for ANY active player,
   // respecting declines and trade cutoffs? Independent of the display window.
+  // Also counts the live add-player preview so the chart/slider extend to show
+  // a future draft pick's seasons while it's being staged.
   yearHasData(yc){
+    if(typeof previewContract!=='undefined' && previewContract &&
+       parseSalary(previewContract.dict[yc])!==null) return true;
     for(const p of this.active){
       const name=p["Player"];
       if(this.isYearRemoved(name,yc)) continue;
@@ -1041,6 +1155,12 @@ class RosterState{
         entries.push([name,sal,opt]);
       }
       entries.sort((a,b)=>(a[2]-b[2])||(b[1]-a[1]));
+      // Append the live add-player preview (if any) as a special top segment.
+      // Tagged isPreview=true so the chart paints it blue and ignores clicks.
+      if(typeof previewContract!=='undefined' && previewContract){
+        const ps=parseSalary(previewContract.dict[yc]);
+        if(ps) entries.push([previewContract.name, ps, false, true]);
+      }
       if(entries.length) data.set(yc,entries);
     }
     return data;
@@ -1333,21 +1453,29 @@ function renderChart(ctx,state,x0,y0,W,H,s){
     anySel = years.some(yc => data.get(yc).some(p => selSet.has(p[0])));
   }
   years.forEach((yc,i)=>{let bottom=0; const cx=X(i);
-    for(const [name,sal,isOpt] of data.get(yc)){
+    for(const seg of data.get(yc)){
+      const name=seg[0], sal=seg[1], isOpt=seg[2], isPrev=seg[3]===true;
       const top=Y((bottom+sal)/1e6), h=Y(bottom/1e6)-top, x=cx-barW/2;
       const isSel = anySel && selSet.has(name);
-      const dim = anySel && !isSel;
+      const dim = anySel && !isSel && !isPrev;   // never dim the preview
       ctx.save();
       if(dim) ctx.globalAlpha=0.28;
-      ctx.fillStyle=THEME.bar; ctx.fillRect(x,top,barW,h);
-      if(isOpt){ctx.fillStyle=hatch; ctx.fillRect(x,top,barW,h);}
+      if(isPrev){
+        // Blue translucent fill marks the staged (not-yet-added) contract.
+        ctx.fillStyle=THEME.accent||"#5EA8ED"; ctx.globalAlpha=(ctx.globalAlpha||1)*0.34;
+        ctx.fillRect(x,top,barW,h);
+        ctx.globalAlpha=1;
+      }else{
+        ctx.fillStyle=THEME.bar; ctx.fillRect(x,top,barW,h);
+        if(isOpt){ctx.fillStyle=hatch; ctx.fillRect(x,top,barW,h);}
+      }
       // separator line at top of segment
       ctx.fillStyle=THEME.sep; ctx.fillRect(x,top-0.6*s,barW,1.2*s);
       ctx.restore();
-      // highlight outline on each highlighted player's segments
-      if(isSel){
+      // highlight outline: white for a selected roster player, blue for preview.
+      if(isSel || isPrev){
         ctx.save();
-        ctx.strokeStyle=THEME.name; ctx.lineWidth=2.4*s;
+        ctx.strokeStyle=isPrev?(THEME.accent||"#5EA8ED"):THEME.name; ctx.lineWidth=2.4*s;
         ctx.strokeRect(x+ctx.lineWidth/2, top+ctx.lineWidth/2, barW-ctx.lineWidth, h-ctx.lineWidth);
         ctx.restore();
       }
@@ -1360,9 +1488,10 @@ function renderChart(ctx,state,x0,y0,W,H,s){
 
   // names
   years.forEach((yc,i)=>{let bottom=0; const cx=X(i);
-    for(const [name,sal] of data.get(yc)){
+    for(const seg of data.get(yc)){
+      const name=seg[0], sal=seg[1], isPrev=seg[3]===true;
       const top=Y((bottom+sal)/1e6), h=Y(bottom/1e6)-top;
-      const dim = anySel && !selSet.has(name);
+      const dim = anySel && !selSet.has(name) && !isPrev;
       if(dim) ctx.save(), ctx.globalAlpha=0.30;
       fitLabel(ctx,name,cx,top,h,barW);
       if(dim) ctx.restore();
@@ -1432,6 +1561,41 @@ function exportPNG(state){
 
 /* ════ UI WIRING ════ */
 const TEAMS=JSON.parse(document.getElementById("teamData").textContent);
+// League-wide player info (position/height/weight/birthday), keyed by player
+// name (and "TEAM|name" as a fallback). Empty object if no players.csv was
+// embedded — the expanded-card info strip is simply skipped in that case.
+const PLAYERS=JSON.parse(document.getElementById("playerData").textContent);
+
+// Look up a player's metadata, preferring the team-qualified key so that two
+// players who share a name don't collide.
+function playerInfo(name){
+  if(ST && ST.teamName && PLAYERS[`${ST.teamName}|${name}`]) return PLAYERS[`${ST.teamName}|${name}`];
+  return PLAYERS[name] || null;
+}
+
+// Current age computed live from a M/D/Y birthday string (e.g. "7/12/1998"),
+// returned as a number with one decimal of precision (e.g. 20.9). The fraction
+// is the share of the way from the most recent birthday to the next one.
+// Returns null if the date is missing or unparseable.
+function ageFromBday(bday){
+  if(!bday) return null;
+  const m=String(bday).split("/");
+  if(m.length!==3) return null;
+  const mon=parseInt(m[0],10), day=parseInt(m[1],10), yr=parseInt(m[2],10);
+  if(isNaN(mon)||isNaN(day)||isNaN(yr)) return null;
+  const today=new Date(); today.setHours(0,0,0,0);
+  let whole=today.getFullYear()-yr;
+  // Subtract a year if this year's birthday hasn't occurred yet.
+  const m0=mon-1;
+  if(today.getMonth()<m0 || (today.getMonth()===m0 && today.getDate()<day)) whole--;
+  // Fractional part: days since the most recent birthday divided by the number
+  // of days until the following birthday (handles leap years naturally).
+  const lastBday=new Date(yr+whole, m0, day);
+  const nextBday=new Date(yr+whole+1, m0, day);
+  const frac=(today-lastBday)/(nextBday-lastBday);
+  const age=whole+frac;
+  return (age>0 && age<100) ? age : null;
+}
 let ST=null;
 let activeTooltip = null;
 const $=id=>document.getElementById(id);
@@ -1485,6 +1649,7 @@ function refreshTotals(){
     head.innerHTML=`<span class="ys-chev">▸</span>
       <span class="ys-yr">${r.yc}</span>
       <span class="ys-status" style="color:${lineClr}">${r.status}</span>
+      <span class="ys-count">${r.players} players</span>
       <span class="ys-tot">$${r.total.toFixed(0)}M</span>`;
     head.onclick=()=>{ if(expandedYears.has(r.yc)) expandedYears.delete(r.yc); else expandedYears.add(r.yc); refreshTotals(); };
     cell.appendChild(head);
@@ -1498,13 +1663,13 @@ function refreshTotals(){
         growthHTML=
           `<div class="ys-growth">`+
             `<span class="ysg-lbl">Increase vs prior year</span>`+
-            `<input type="number" step="0.1" class="ysg-inp" id="growth-${yr}" value="${growthFor(yr).toFixed(1)}">`+
+            `<input type="number" step="0.01" class="ysg-inp" id="growth-${yr}" value="${growthFor(yr).toFixed(2)}">`+
             `<span class="ysg-pct">%</span>`+
           `</div>`;
       }else{
         growthHTML=`<div class="ys-growth"><span class="ysg-lbl">Base year (actual values)</span></div>`;
       }
-      let rows=growthHTML+`<div class="ys-bsub">${r.players}/15 players · payroll $${r.total.toFixed(1)}M</div><table class="yt-table"><tbody>`;
+      let rows=growthHTML+`<table class="yt-table"><tbody>`;
       // The breakdown rows run high→low (2nd Apron … Salary Floor). The payroll
       // sits just above the first line it clears, so insert a coloured marker row
       // — matching the box's status colour — at that boundary (or at the very top
@@ -1599,6 +1764,28 @@ function rebuildSidebar(){
 
     if(expanded){
       const body=document.createElement("div"); body.className="rost-body";
+
+      // ── Player info strip ──
+      // A single horizontal line of bio facts (position · height · weight · age)
+      // pulled from the embedded players.csv. Age is computed live from the
+      // stored birthday so it stays current without regenerating the file. The
+      // strip is skipped entirely when no player info is available.
+      const info=playerInfo(name);
+      if(info){
+        const bits=[];
+        if(info.position) bits.push(`<span class="pi-item"><span class="pi-k">POS</span><span class="pi-v">${info.position}</span></span>`);
+        if(info.height)   bits.push(`<span class="pi-item"><span class="pi-k">HT</span><span class="pi-v">${info.height}</span></span>`);
+        if(info.weight)   bits.push(`<span class="pi-item"><span class="pi-k">WT</span><span class="pi-v">${info.weight} lb</span></span>`);
+        const age=ageFromBday(info.bday);
+        if(age!=null)     bits.push(`<span class="pi-item"><span class="pi-k">AGE</span><span class="pi-v">${age.toFixed(1)}</span></span>`);
+        if(bits.length){
+          const strip=document.createElement("div");
+          strip.className="rc-pinfo";
+          strip.innerHTML=bits.join('<span class="pi-sep">·</span>');
+          body.appendChild(strip);
+        }
+      }
+
       const hasExtNow=[...ST.extensions.keys()].some(k=>k.startsWith(name+"|"));
       // Options freeze once an extension exists OR while the extension form is
       // open for this player — accepted/declined can't be changed during/after
@@ -1746,7 +1933,7 @@ function rebuildSidebar(){
     rl.appendChild(buildAddPlayerPanel());
     // populate the freshly-built selects for whichever mode is active
     if(addPlayerMode==="draft") rebuildDraftControls();
-    else rebuildAddPlayerTeams();
+    else rebuildLeagueControls();
   }
 }
 
@@ -1759,25 +1946,26 @@ function buildAddPlayerPanel(){
   const leagueOn=addPlayerMode==="league";
   wrap.innerHTML=
     `<div class="ap-title">Add player</div>`+
+    // ── Top row: source mode (From League / From Draft) only ──
     `<div class="ap-mode">`+
-      `<button id="apModeLeague" class="${leagueOn?"on":""}">From league</button>`+
-      `<button id="apModeDraft" class="${leagueOn?"":"on"}">Draft pick</button>`+
+      `<button id="apModeLeague" class="${leagueOn?"on":""}">From League</button>`+
+      `<button id="apModeDraft" class="${leagueOn?"":"on"}">From Draft</button>`+
     `</div>`+
-    // ── League block: team, then player, then season ──
+    // ── League block: team filter, search, scrollable list ──
     `<div id="apLeague" style="display:${leagueOn?"block":"none"}">`+
-      `<div class="ap-label">From team</div><select id="addPlayerTeam"></select>`+
-      `<div class="ap-label">Player</div><select id="addPlayerSelect"></select>`+
-      `<div class="ap-label">Join in season</div><select id="addPlayerYear"></select>`+
-    `</div>`+
-    // ── Draft block: season + pick (inline), then name ──
-    `<div id="apDraft" style="display:${leagueOn?"none":"block"}">`+
-      `<div class="ap-draftrow">`+
-        `<div class="ap-col"><div class="ap-label">Rookie season</div><select id="draftYear"></select></div>`+
-        `<div class="ap-col ap-col-pick"><div class="ap-label">Pick</div>`+
-          `<input type="number" id="draftPick" min="1" max="30" step="1" value="1" placeholder="1–30"></div>`+
+      `<div class="ap-filterrow">`+
+        `<div class="ap-filtercol-team"><div class="ap-label">Team</div><select id="addPlayerTeam"></select></div>`+
+        `<div class="ap-filtercol-search"><div class="ap-label">Search</div>`+
+          `<input type="text" id="addPlayerSearchInp" placeholder="Type a name…" autocomplete="off"></div>`+
       `</div>`+
-      `<div class="ap-label">Player name</div>`+
-      `<input type="text" id="draftName" placeholder="Player name" autocomplete="off">`+
+      `<div class="ap-list" id="apList"></div>`+
+    `</div>`+
+    // ── Draft block: pick grid + name ──
+    `<div id="apDraft" style="display:${leagueOn?"none":"block"}">`+
+      `<div class="ap-label">Draft year</div>`+
+      `<select id="draftYear"></select>`+
+      `<div class="ap-label">Pick</div>`+
+      `<div class="ap-pickgrid" id="draftPickGrid"></div>`+
     `</div>`+
     `<div class="ap-preview" id="addPlayerPreview"></div>`+
     `<div class="ap-err" id="addPlayerErr"></div>`+
@@ -1786,16 +1974,21 @@ function buildAddPlayerPanel(){
       `<button class="b-green" id="addPlayerSubmit">Add to roster</button>`+
     `</div>`;
   // mode toggle
-  wrap.querySelector("#apModeLeague").onclick=()=>{ if(addPlayerMode!=="league"){addPlayerMode="league"; rebuildSidebar(); rebuildAddPlayerTeams();} };
-  wrap.querySelector("#apModeDraft").onclick=()=>{ if(addPlayerMode!=="draft"){addPlayerMode="draft"; rebuildSidebar(); rebuildDraftControls();} };
-  // league handlers
-  wrap.querySelector("#addPlayerTeam").onchange=rebuildAddPlayerList;
-  wrap.querySelector("#addPlayerSelect").onchange=()=>rebuildAddPlayerYears();
-  wrap.querySelector("#addPlayerYear").onchange=updateAddPlayerPreview;
-  // draft handlers
-  wrap.querySelector("#draftName").oninput=updateDraftPreview;
-  wrap.querySelector("#draftPick").oninput=updateDraftPreview;
-  wrap.querySelector("#draftYear").onchange=updateDraftPreview;
+  wrap.querySelector("#apModeLeague").onclick=()=>{ if(addPlayerMode!=="league"){addPlayerMode="league"; clearPreview(); rebuildSidebar(); rebuildLeagueControls();} };
+  wrap.querySelector("#apModeDraft").onclick=()=>{ if(addPlayerMode!=="draft"){addPlayerMode="draft"; clearPreview(); rebuildSidebar(); rebuildDraftControls();} };
+  if(leagueOn){
+    // league handlers
+    wrap.querySelector("#addPlayerTeam").onchange=e=>{ addPlayerFilterTeam=e.target.value; rebuildCandidateList(); };
+    const si=wrap.querySelector("#addPlayerSearchInp");
+    si.value=addPlayerSearch;
+    si.oninput=()=>{ addPlayerSearch=si.value.trim().toLowerCase(); rebuildCandidateList(); };
+  }else{
+    // draft handlers
+    const ysel=wrap.querySelector("#draftYear");
+    populateDraftYears(ysel);
+    ysel.onchange=updateDraftPreview;
+    buildPickGrid(wrap.querySelector("#draftPickGrid"));
+  }
   // shared
   wrap.querySelector("#addPlayerCancel").onclick=closeAddPlayer;
   wrap.querySelector("#addPlayerSubmit").onclick=submitAddPlayer;
@@ -2153,11 +2346,12 @@ canvas.addEventListener("mousemove", (e) => {
       const cx = mL + slotW * (i + 0.5);
       if (mx >= cx - barW / 2 && mx <= cx + barW / 2) {
           let bottom = 0;
-          for (const [name, sal, isOpt] of data.get(yc)) {
+          for (const seg of data.get(yc)) {
+              const name = seg[0], sal = seg[1], isPrev = seg[3] === true;
               const top = Y((bottom + sal) / 1e6);
               const base = Y(bottom / 1e6);
               if (my >= top && my <= base) {
-                  found = { name, salary: sal, year: yc, mx, my, s };
+                  if (!isPrev) found = { name, salary: sal, year: yc, mx, my, s };
                   break;
               }
               bottom += sal;
@@ -2205,9 +2399,10 @@ function segmentAtEvent(e){
     const yc=years[i], cx=mL+slotW*(i+0.5);
     if(mx>=cx-barW/2 && mx<=cx+barW/2){
       let bottom=0;
-      for(const [name,sal] of data.get(yc)){
+      for(const seg of data.get(yc)){
+        const name=seg[0], sal=seg[1], isPrev=seg[3]===true;
         const top=Y((bottom+sal)/1e6), base=Y(bottom/1e6);
-        if(my>=top && my<=base) return name;
+        if(my>=top && my<=base) return isPrev?null:name;   // preview isn't clickable
         bottom+=sal;
       }
     }
@@ -2252,75 +2447,154 @@ function clearSelection(){
 //     a panel or clicking a highlighted bar removes it.) ──
 
 /* ── Add Player (inline panel) ── */
-let addPlayerCache=[];   // players for the currently-selected source team
-let addPlayerMode="league";   // "league" (from another team) or "draft" (rookie scale)
+let addPlayerMode="league";   // "league" (search the league) or "draft" (rookie scale)
 // When a league player has no existing salary at the chosen join season, the user
 // authors a contract here — same $M/% rows as the extension form.
 // Each row: {yr, unit:"dollar"|"percent", value:Number, isOpt:Bool}.
 let addContractRows=[];
-function otherTeamNames(){
-  return Object.keys(TEAMS).filter(t=>t!==ST.teamName);
+
+// ── League candidate model ──
+// Candidates come from the league-wide players.csv (PLAYERS), filterable by team
+// and name. Each candidate carries its bio info plus — when their original team's
+// salary CSV lists them — the source contract dict used for carry-over. Players
+// already on MY roster are excluded entirely (including my own two-way players
+// who are already rostered).
+let leagueCandidates=[];      // [{name, team, info, src|null}]
+let addPlayerFilterTeam="*";  // "*" = all teams, else a team code
+let addPlayerSearch="";       // current search text (lower-cased)
+let addPlayerSel=null;        // name of the currently-selected candidate
+
+// ── Live chart preview ──
+// The staged contract shown on the chart (blue) before "Add to roster" is
+// clicked. {name, dict} or null. It feeds chartData()/yearTotals so thresholds
+// and totals reflect it, but it is NOT a roster player — it can't be clicked or
+// deselected on the chart, only cleared from the add-player dialog.
+let previewContract=null;
+function clearPreview(){ if(previewContract){ previewContract=null; redrawChart(); } }
+
+// User-entered bio overrides for the player being added (all optional). Applied
+// to the preview strip and saved with the player on submit.
+// Draft mode: selected pick (1–30), chosen from a grid of boxes.
+let draftPickNum=1;
+let draftNameVal="";   // player name (input now lives inside the preview card)
+
+// Index every team's salary CSV once so candidates can be matched to a real
+// contract by (team,name) with a name-only fallback.
+let _contractIndex=null;
+function contractIndex(){
+  if(_contractIndex) return _contractIndex;
+  _contractIndex={byTeamName:new Map(), byName:new Map()};
+  for(const team of Object.keys(TEAMS)){
+    let players=[];
+    try{ players=teamPlayers(TEAMS[team].csv).players; }catch(e){ continue; }
+    for(const p of players){
+      const nm=p["Player"];
+      _contractIndex.byTeamName.set(team+"|"+nm, p);
+      if(!_contractIndex.byName.has(nm)) _contractIndex.byName.set(nm, p);
+    }
+  }
+  return _contractIndex;
 }
+function contractFor(team, name){
+  const idx=contractIndex();
+  return idx.byTeamName.get(team+"|"+name) || idx.byName.get(name) || null;
+}
+
+// Build the full candidate list from players.csv, excluding my current roster.
+function buildLeagueCandidates(){
+  const onRoster=new Set(ST.active.map(p=>p["Player"]));
+  const seen=new Set();
+  const out=[];
+  for(const [key,info] of Object.entries(PLAYERS)){
+    if(key.includes("|")) continue;          // skip the team-qualified duplicate keys
+    const name=key;
+    if(onRoster.has(name)) continue;         // already on my roster
+    if(seen.has(name)) continue; seen.add(name);
+    out.push({name, team:info.team||"", info, src:contractFor(info.team||"", name)});
+  }
+  out.sort((a,b)=>a.name.localeCompare(b.name));
+  return out;
+}
+
+function leagueTeamCodes(){
+  const s=new Set();
+  for(const c of leagueCandidates) if(c.team) s.add(c.team);
+  return [...s].sort();
+}
+function filteredCandidates(){
+  return leagueCandidates.filter(c=>{
+    if(addPlayerFilterTeam!=="*" && c.team!==addPlayerFilterTeam) return false;
+    if(addPlayerSearch && !c.name.toLowerCase().includes(addPlayerSearch)) return false;
+    return true;
+  });
+}
+function selectedCandidate(){
+  return leagueCandidates.find(c=>c.name===addPlayerSel)||null;
+}
+
 function openAddPlayerPanel(){
   if(!ST) return;
-  // Draft mode needs no other teams; only force draft if none are available.
-  if(!otherTeamNames().length) addPlayerMode="draft";
+  leagueCandidates=buildLeagueCandidates();
+  // League mode needs candidates; fall back to draft only if there are none.
+  if(!leagueCandidates.length) addPlayerMode="draft";
+  addPlayerFilterTeam="*"; addPlayerSearch=""; addPlayerSel=null; addContractRows=[];
+  previewContract=null; draftPickNum=1; draftNameVal="";
   addPlayerOpen=true;
   rebuildSidebar();
-  // scroll the panel into view once it's in the DOM
   const panel=document.querySelector(".add-panel");
   if(panel && panel.scrollIntoView) panel.scrollIntoView({block:"nearest"});
 }
 function closeAddPlayer(){
   if(!addPlayerOpen) return;
   addPlayerOpen=false;
+  clearPreview();
+  // Undo any chart extension left by a previewed-but-not-added future pick.
+  if(ST){ ST.trimEmptyTrailingYears(); rebuildYearSlider(); }
   rebuildSidebar();
+  redrawChart();
 }
-// Populate the team dropdown, then cascade to players/years/preview.
-function rebuildAddPlayerTeams(){
-  const tsel=$("addPlayerTeam"); if(!tsel) return;
-  const others=otherTeamNames();
-  tsel.innerHTML="";
-  for(const t of others){const o=document.createElement("option"); o.value=t; o.textContent=t; tsel.appendChild(o);}
-  tsel.value=others[0];
-  $("addPlayerErr").textContent="";
-  rebuildAddPlayerList();
-}
-function rebuildAddPlayerList(){
-  const team=$("addPlayerTeam").value;
-  const sel=$("addPlayerSelect"); sel.innerHTML="";
-  addPlayerCache=[];
-  try{
-    const {players}=teamPlayers(TEAMS[team].csv);
-    // exclude players already on this roster (base or already-added)
-    const onRoster=new Set(ST.active.map(p=>p["Player"]));
-    addPlayerCache=players.filter(p=>!onRoster.has(p["Player"]));
-  }catch(err){ $("addPlayerErr").textContent="Could not read "+team+": "+err.message; }
-  if(!addPlayerCache.length){
-    const o=document.createElement("option"); o.textContent="(no available players)"; o.value="-1"; sel.appendChild(o);
-  }else{
-    addPlayerCache.forEach((p,i)=>{
-      const o=document.createElement("option"); o.value=i; o.textContent=p["Player"]; sel.appendChild(o);});
-    sel.value=0;
+
+// Default join season for a candidate: their first contracted season if they
+// have a carry-over contract, else the first charted season.
+function defaultJoinIdx(cand){
+  if(cand && cand.src){
+    for(let i=0;i<ST.yearCols.length;i++) if(parseSalary(cand.src[ST.yearCols[i]])!=null) return i;
   }
-  rebuildAddPlayerYears();
+  return 0;
 }
-function rebuildAddPlayerYears(){
-  // Offer EVERY season as a possible join year. If the chosen season (and the
-  // ones after it) hold no salary for this player, the user authors a contract
-  // via the inline $M/% entry below; otherwise their existing figures carry over.
-  const ysel=$("addPlayerYear"); ysel.innerHTML="";
-  const i=parseInt($("addPlayerSelect").value);
-  const src=(!isNaN(i)&&i>=0)?addPlayerCache[i]:null;
-  let firstFilled=-1;
-  ST.yearCols.forEach((yc,idx)=>{
-    if(firstFilled<0 && src && parseSalary(src[yc])!=null) firstFilled=idx;
-    const o=document.createElement("option"); o.value=idx; o.textContent=yc; ysel.appendChild(o);
-  });
-  if(!ST.yearCols.length){const o=document.createElement("option"); o.value="0"; o.textContent="(no seasons)"; ysel.appendChild(o);}
-  ysel.value=firstFilled>=0?firstFilled:0;   // default: first contracted season, else the first season
-  addContractRows=[];                        // reset any staged manual contract
+// (Re)render the team filter, search box, and candidate list.
+function rebuildLeagueControls(){
+  const tsel=$("addPlayerTeam");
+  if(tsel){
+    tsel.innerHTML="";
+    const all=document.createElement("option"); all.value="*"; all.textContent="All teams"; tsel.appendChild(all);
+    for(const t of leagueTeamCodes()){const o=document.createElement("option"); o.value=t; o.textContent=t; tsel.appendChild(o);}
+    tsel.value=addPlayerFilterTeam;
+  }
+  rebuildCandidateList();
   updateAddPlayerPreview();
+}
+function rebuildCandidateList(){
+  const box=$("apList"); if(!box) return;
+  box.innerHTML="";
+  const list=filteredCandidates();
+  if(!list.length){
+    const e=document.createElement("div"); e.className="apl-empty"; e.textContent="No players match.";
+    box.appendChild(e); return;
+  }
+  for(const c of list){
+    const row=document.createElement("div");
+    row.className="apl-row"+(c.name===addPlayerSel?" sel":"");
+    const tag=c.team?`<span class="apl-team">${c.team}</span>`:"";
+    const pos=c.info&&c.info.position?`<span class="apl-pos">${c.info.position}</span>`:"";
+    row.innerHTML=`<span class="apl-name">${c.name}</span>${pos}${tag}`;
+    row.onclick=()=>{
+      addPlayerSel=c.name; addContractRows=[];
+      rebuildCandidateList();      // repaint selection highlight
+      updateAddPlayerPreview();
+    };
+    box.appendChild(row);
+  }
 }
 /* Return {Player, Age, <year>…, Guaranteed} shifted so the player's contract
    begins at startYearIdx. Salaries keep their order and option flags; any years
@@ -2356,28 +2630,111 @@ function isSourceOption(src,yc){
 function addHasExistingContract(src, startIdx){
   return ST.yearCols.some((yc,idx)=>idx>=startIdx && parseSalary(src[yc])!=null);
 }
+// Build the staged contract dict for the current league selection at the chosen
+// start year. Carry-over when a source contract exists at/after that season,
+// otherwise the manually-authored rows. Returns null if nothing usable yet.
+function leaguePreviewDict(){
+  const cand=selectedCandidate(); if(!cand) return null;
+  const ysel=$("addPlayerYear");
+  const startIdx=ysel?(parseInt(ysel.value)||0):defaultJoinIdx(cand);
+  const src=cand.src;
+  if(src && addHasExistingContract(src,startIdx)){
+    return buildShiftedContract(src,startIdx).dict;
+  }
+  // manual: only if rows hold at least one usable value
+  if(addContractRows.length && addContractRows.some(er=>!isNaN(er.value)&&er.value>0)){
+    return buildManualContract(cand.name, (src&&src["Age"])||"");
+  }
+  return null;
+}
+// Apply the staged contract to the live chart preview (blue) and redraw.
+function refreshPreviewOnChart(){
+  const cand=selectedCandidate();
+  const dict=cand?leaguePreviewDict():null;
+  previewContract = (cand && dict && ST.yearCols.some(yc=>parseSalary(dict[yc]))) ? {name:cand.name, dict} : null;
+  redrawChart();
+}
 function updateAddPlayerPreview(){
-  const i=parseInt($("addPlayerSelect").value);
-  const box=$("addPlayerPreview");
-  if(isNaN(i)||i<0||!addPlayerCache[i]){box.textContent=""; addContractRows=[]; return;}
-  const startIdx=parseInt($("addPlayerYear").value)||0;
-  const src=addPlayerCache[i];
+  const box=$("addPlayerPreview"); if(!box) return;
+  const cand=selectedCandidate();
+  if(!cand){
+    box.innerHTML='<div class="ap-hint">Select a player to preview their contract.</div>';
+    addContractRows=[]; clearPreview(); return;
+  }
+  const src=cand.src;
 
-  if(addHasExistingContract(src,startIdx)){
+  // Year <select> (no label). Preserve prior value across rebuilds; default to
+  // the player's natural start season.
+  const prevYsel=$("addPlayerYear");
+  let startIdx = prevYsel ? (parseInt(prevYsel.value)||0) : defaultJoinIdx(cand);
+  if(startIdx>=ST.yearCols.length) startIdx=0;
+
+  // Build the preview card shell with name, total, year select, and stat inputs.
+  const wrap=document.createElement("div"); wrap.className="ap-card-prev";
+  const head=document.createElement("div"); head.className="apc-head";
+  head.innerHTML=`<span class="apc-name">${cand.name}</span><span class="apc-total" id="apcTotal"></span>`;
+  wrap.appendChild(head);
+
+  // Year selector row
+  const yrow=document.createElement("div"); yrow.className="apc-yearrow";
+  const ysel=document.createElement("select"); ysel.id="addPlayerYear";
+  ST.yearCols.forEach((yc,idx)=>{const o=document.createElement("option"); o.value=idx; o.textContent=yc; ysel.appendChild(o);});
+  if(!ST.yearCols.length){const o=document.createElement("option"); o.value="0"; o.textContent="(no seasons)"; ysel.appendChild(o);}
+  ysel.value=startIdx;
+  ysel.onchange=()=>{ addContractRows=[]; updateAddPlayerPreview(); };
+  yrow.appendChild(ysel);
+  wrap.appendChild(yrow);
+
+  // Bio strip (read-only) from players.csv — league players already have stats.
+  const info=cand.info;
+  if(info){
+    const bits=[];
+    if(info.position) bits.push(`<span class="pi-item"><span class="pi-k">POS</span><span class="pi-v">${info.position}</span></span>`);
+    if(info.height)   bits.push(`<span class="pi-item"><span class="pi-k">HT</span><span class="pi-v">${info.height}</span></span>`);
+    if(info.weight)   bits.push(`<span class="pi-item"><span class="pi-k">WT</span><span class="pi-v">${info.weight} lb</span></span>`);
+    const age=ageFromBday(info.bday);
+    if(age!=null)     bits.push(`<span class="pi-item"><span class="pi-k">AGE</span><span class="pi-v">${age.toFixed(1)}</span></span>`);
+    if(bits.length){
+      const strip=document.createElement("div"); strip.className="rc-pinfo";
+      strip.innerHTML=bits.join('<span class="pi-sep">·</span>');
+      wrap.appendChild(strip);
+    }
+  }
+
+  // Contract body host
+  const cbody=document.createElement("div"); cbody.className="apc-cbody";
+  wrap.appendChild(cbody);
+
+  box.innerHTML=""; box.appendChild(wrap);
+
+  if(src && addHasExistingContract(src,startIdx)){
     // ── Carry-over: keep the player's real figures from the join year onward ──
     addContractRows=[];
     const {dict,optionYears}=buildShiftedContract(src,startIdx);
     const optSet=new Set(optionYears);
-    const parts=ST.yearCols.map(yc=>{
+    let guar=0;
+    const rowsHTML=ST.yearCols.map(yc=>{
       const s=parseSalary(dict[yc]); if(!s) return null;
-      return `${yc}: ${fmtM(s)}${optSet.has(yc)?"  (option)":""}`;}).filter(Boolean);
+      const isOpt=optSet.has(yc);
+      if(!isOpt) guar+=s;
+      const cap=THRESHOLDS[parseInt(yc)]?THRESHOLDS[parseInt(yc)][0]:null;
+      const pct=cap?`${((s/1e6)/cap*100).toFixed(1)}%`:"";
+      return `<div class="rc-year"><span class="rcy-yr">${yc}</span>`+
+             `<span class="rcy-sal">${fmtM(s)}</span>`+
+             `<span class="rcy-pct">${pct}</span>`+
+             `<span class="rcy-tag ${isOpt?"t-opt":""}">${isOpt?"opt":""}</span></div>`;
+    }).filter(Boolean).join("");
     const dropped=ST.yearCols.filter((yc,idx)=>idx<startIdx && parseSalary(src[yc])!=null).length;
-    box.innerHTML="Contract as added:<br>"+(parts.join("<br>")||"(no seasons at this start year)")
-      +(dropped>0?`<br><span style="color:var(--orange)">${dropped} earlier season(s) dropped — joining mid-contract</span>`:"");
-    return;
+    cbody.innerHTML=(rowsHTML||`<div class="ap-hint">No seasons at this start year.</div>`)+
+      (dropped>0?`<div class="apc-note">${dropped} earlier season(s) dropped — joining mid-contract</div>`:"");
+    const tot=wrap.querySelector("#apcTotal"); if(tot) tot.textContent=fmtM(guar);
+  }else{
+    // ── Manual entry: author a contract (e.g. a two-way player) ──
+    renderAddContractForm(cbody, startIdx);
+    // total updates as values are entered (renderAddContractForm calls back)
   }
-  // ── Manual entry: this player has no salary at/after the chosen season ──
-  renderAddContractForm(box, startIdx);
+  // Push the staged contract to the chart in blue.
+  refreshPreviewOnChart();
 }
 /* Render the inline contract-authoring form (mirrors the extension form: per-year
    $M / % cap rows, an "add another year" affordance, and an option flag on the
@@ -2408,9 +2765,10 @@ function renderAddContractForm(box, startIdx){
     const inp=row.querySelector("input");
     const calc=row.querySelector(".ifr-calc");
     if(!isNaN(er.value)) inp.value=er.value;
-    function upd(){ if(isNaN(er.value)){calc.textContent=""; return;}
-      if(er.unit==="percent") calc.textContent=`= $${(capForYearM(yr)*er.value/100).toFixed(1)}M`;
-      else calc.textContent=`= ${(er.value/capForYearM(yr)*100).toFixed(1)}%`; }
+    function upd(){ if(isNaN(er.value)){calc.textContent=""; }
+      else if(er.unit==="percent") calc.textContent=`= $${(capForYearM(yr)*er.value/100).toFixed(1)}M`;
+      else calc.textContent=`= ${(er.value/capForYearM(yr)*100).toFixed(1)}%`;
+      refreshManualPreview(); }
     inp.oninput=()=>{er.value=parseFloat(inp.value); upd();};
     row.querySelectorAll(".unit-tog button").forEach(b=>b.onclick=()=>{
       er.unit=b.dataset.u;
@@ -2424,7 +2782,7 @@ function renderAddContractForm(box, startIdx){
       const optBtn=document.createElement("button"); optBtn.className="rc-btn if-optbtn";
       const paint=()=>{ optBtn.textContent=er.isOpt?"✓ Final year is an option":"Make final year an option";
         optBtn.classList.toggle("on", er.isOpt); };
-      optBtn.onclick=()=>{ er.isOpt=!er.isOpt; paint(); };
+      optBtn.onclick=()=>{ er.isOpt=!er.isOpt; paint(); refreshManualPreview(); };
       paint();
       form.appendChild(optBtn);
     }
@@ -2444,6 +2802,20 @@ function renderAddContractForm(box, startIdx){
     form.appendChild(more);
   }
   box.appendChild(form);
+}
+// While authoring a manual contract, keep the preview total and the blue chart
+// preview in sync with the entered values.
+function refreshManualPreview(){
+  const cand=selectedCandidate(); if(!cand) return;
+  const tot=$("apcTotal");
+  if(tot){
+    if(addContractRows.some(er=>!isNaN(er.value)&&er.value>0)){
+      const dict=buildManualContract(cand.name,"");
+      const guar=parseSalary(dict[ST.guaranteedCol])||0;
+      tot.textContent=fmtM(guar);
+    }else tot.textContent="";
+  }
+  refreshPreviewOnChart();
 }
 // Convert staged manual rows into a player dict the roster understands. Years 1..n
 // are guaranteed except a flagged final-year option, so Guaranteed = sum of
@@ -2466,97 +2838,189 @@ function buildManualContract(name, age){
 // rebuildSidebar). submitAddPlayer adds the player and closes the panel.
 
 /* ── Draft pick mode ──
-   Pick is a number box (1–30). Populate the rookie-season dropdown, then build a
-   rookie-scale contract: four consecutive seasons from the chosen entry year,
-   years 1–2 guaranteed and years 3–4 as team options. */
-function rebuildDraftControls(){
-  const ysel=$("draftYear"); if(!ysel) return;
-  if(!ysel.options.length){
-    // Rookie season can be any charted season (the deal runs 4 years from there;
-    // seasons past the chart's end are simply not shown).
-    ST.yearCols.forEach((yc,idx)=>{const o=document.createElement("option"); o.value=idx; o.textContent=yc; ysel.appendChild(o);});
-    ysel.value=0;
+   Pick (1–30) is chosen from a grid of 30 boxes laid out in 3 rows of 10. The
+   "draft year" dropdown lists draft years (e.g. 2026, 2027, 2028) — not season
+   strings, and never 2025 (that draft has already happened). A draft year Y maps
+   to rookie season Y-(Y+1): e.g. the 2026 draft → rookie season 2026-27, which
+   is the yearCol whose start year is Y. The rookie-scale contract runs four
+   consecutive seasons from there, years 1–2 guaranteed and years 3–4 options. */
+// Render the 1–30 pick selector as a grid of clickable boxes (3×10).
+function buildPickGrid(host){
+  if(!host) return;
+  host.innerHTML="";
+  const max=Math.min(30, ROOKIE_SCALE.length);
+  for(let n=1;n<=max;n++){
+    const cell=document.createElement("button");
+    cell.type="button";
+    cell.className="ap-pickcell"+(n===draftPickNum?" on":"");
+    cell.textContent=n;
+    cell.onclick=()=>{ draftPickNum=n; buildPickGrid(host); updateDraftPreview(); };
+    host.appendChild(cell);
   }
+}
+// Draft years available: the current calendar year through 7 years out (e.g.
+// 2026–2033 as of 2026). A draft year Y's rookie season is Y-(Y+1) (e.g. 2030 →
+// "2030-31"). Returns [{year:2030, season:"2030-31"}]. The season need not exist
+// in yearCols yet — buildRookieContract extends the chart to fit it.
+function DRAFT_CURRENT_YEAR(){ return new Date().getFullYear(); }
+function draftYearOptions(){
+  const cur=DRAFT_CURRENT_YEAR();
+  const out=[];
+  for(let y=cur; y<=cur+7; y++){
+    out.push({year:y, season:seasonLabel(y)});
+  }
+  return out;
+}
+// Populate the (static) draft-year select with draft years (2026, 2027, …).
+// Option value is the rookie-season label (e.g. "2030-31").
+function populateDraftYears(ysel){
+  if(!ysel) return;
+  const prev=ysel.value;
+  ysel.innerHTML="";
+  const dopts=draftYearOptions();
+  for(const o of dopts){const op=document.createElement("option"); op.value=o.season; op.textContent=o.year+" draft"; ysel.appendChild(op);}
+  if(!dopts.length){const op=document.createElement("option"); op.value=""; op.textContent="(no draft years)"; ysel.appendChild(op);}
+  if(prev!=null && prev!=="") ysel.value=prev;
+  else ysel.value=dopts.length?dopts[0].season:"";
+}
+function rebuildDraftControls(){
+  const ysel=$("draftYear");
+  if(ysel && !ysel.options.length) populateDraftYears(ysel);
   updateDraftPreview();
 }
 /* Build a rookie contract dict ({Player, Age, <year>…, Guaranteed}) for a pick
-   entering at startYearIdx. Years 1–2 are guaranteed; years 3–4 are options, so
-   Guaranteed is set to the sum of the first two on-chart seasons — which makes
-   RosterState.determineOption flag years 3 & 4 as options automatically. */
-function buildRookieContract(name, pick, startYearIdx){
-  const enterYear=parseInt(ST.yearCols[startYearIdx]);   // e.g. 2026
-  const sals=rookieSalaries(pick, enterYear);            // [Y1,Y2,Y3opt,Y4opt]
+   entering at rookie season `startSeason` (e.g. "2030-31"). Years 1–2 are
+   guaranteed; years 3–4 are options, so Guaranteed is the sum of the first two
+   seasons — which makes RosterState.determineOption flag years 3 & 4 as options.
+   The chart's yearCols are extended as needed so all four seasons are kept (a
+   future pick is never cut off). Returns null on bad input. */
+function buildRookieContract(name, pick, startSeason){
+  const enterYear=seasonStartYear(startSeason);   // e.g. 2030
+  if(isNaN(enterYear)) return null;
+  const sals=rookieSalaries(pick, enterYear);     // [Y1,Y2,Y3opt,Y4opt]
   if(!sals) return null;
+  // Compute the four consecutive season labels and make sure the chart spans them.
+  const seasons=[startSeason];
+  for(let k=1;k<4;k++) seasons.push(seasonLabel(enterYear+k));
+  ST.ensureYearTo(seasons[3]);                    // extend yearCols to the last rookie year
   const dict={"Player":name||("Pick #"+pick),"Age":""};
   for(const yc of ST.yearCols) dict[yc]="";
   let guaranteed=0;
   for(let k=0;k<4;k++){
-    const idx=startYearIdx+k;
-    if(idx>=ST.yearCols.length) break;                   // runs past the chart → drop
-    const yc=ST.yearCols[idx];
+    const yc=seasons[k];
     dict[yc]="$"+Math.round(sals[k]).toLocaleString("en-US");
-    if(k<2) guaranteed+=Math.round(sals[k]);             // first two years guaranteed
+    if(k<2) guaranteed+=Math.round(sals[k]);      // first two years guaranteed
   }
   dict[ST.guaranteedCol]="$"+guaranteed.toLocaleString("en-US");
   return dict;
 }
 function updateDraftPreview(){
   const box=$("addPlayerPreview"); if(!box) return;
-  const name=($("draftName").value||"").trim();
-  const pick=parseInt($("draftPick").value);
-  const startIdx=parseInt($("draftYear").value)||0;
+  const pick=draftPickNum;
+
+  // Build the preview card. The name input lives INSIDE the dashed preview box,
+  // in the head alongside the running total. (Year + pick controls are above,
+  // outside the card.)
+  const wrap=document.createElement("div"); wrap.className="ap-card-prev";
+  const head=document.createElement("div"); head.className="apc-head";
+  const nameInp=document.createElement("input");
+  nameInp.type="text"; nameInp.id="draftName"; nameInp.className="apc-nameinp";
+  nameInp.placeholder="Player name"; nameInp.autocomplete="off"; nameInp.value=draftNameVal;
+  const total=document.createElement("span"); total.className="apc-total"; total.id="apcTotal";
+  head.appendChild(nameInp); head.appendChild(total);
+  wrap.appendChild(head);
+  // Typing the name updates the chart label/total without rebuilding the card
+  // (which would steal focus mid-type).
+  nameInp.oninput=()=>{ draftNameVal=nameInp.value; refreshDraftContract(); };
+
+  // Contract body
+  const cbody=document.createElement("div"); cbody.className="apc-cbody"; cbody.id="apcCbody";
+  wrap.appendChild(cbody);
+  box.innerHTML=""; box.appendChild(wrap);
+
+  refreshDraftContract();
+}
+// Recompute the rookie contract for the current pick/year/name and update the
+// preview body, total, and blue chart preview — WITHOUT rebuilding the inputs.
+function refreshDraftContract(){
+  const cbody=$("apcCbody"); if(!cbody) return;
+  const pick=draftPickNum;
+  const name=draftNameVal.trim();
   if(isNaN(pick)||pick<1||pick>ROOKIE_SCALE.length){
-    box.innerHTML=`<span style="color:var(--orange)">Enter a pick from 1 to ${ROOKIE_SCALE.length}.</span>`; return;
+    cbody.innerHTML=`<div class="apc-note">Enter a pick from 1 to ${ROOKIE_SCALE.length}.</div>`;
+    const t=$("apcTotal"); if(t) t.textContent="";
+    previewContract=null; redrawChart(); return;
   }
-  const dict=buildRookieContract(name,pick,startIdx);
-  if(!dict){box.textContent=""; return;}
+  const ysel=$("draftYear");
+  const startSeason=ysel?ysel.value:null;
+  // Clear the prior preview and trim any years it left behind, so switching to a
+  // nearer draft year shrinks the window back down.
+  previewContract=null;
+  ST.trimEmptyTrailingYears();
+  const dict=buildRookieContract(name,pick,startSeason);   // extends yearCols if needed
+  if(!dict){cbody.textContent=""; previewContract=null; redrawChart(); return;}
   const guar=parseSalary(dict[ST.guaranteedCol]);
-  const parts=ST.yearCols.map(yc=>{
+  const rowsHTML=ST.yearCols.map(yc=>{
     const s=parseSalary(dict[yc]); if(!s) return null;
-    // option = a season beyond the guaranteed total (years 3–4)
     let run=0,opt=false;
     for(const y of ST.yearCols){const v=parseSalary(dict[y]); if(v==null)continue; run+=v; if(y===yc){opt=run>guar+1; break;}}
-    return `${yc}: ${fmtM(s)}${opt?"  (option)":""}`;}).filter(Boolean);
-  const shown=ST.yearCols.filter(yc=>parseSalary(dict[yc])).length;
-  box.innerHTML="Rookie contract (2 guaranteed + 2 option):<br>"+(parts.join("<br>")||"(no seasons on chart)")
-    +(shown<4?`<br><span style="color:var(--orange)">${4-shown} season(s) fall past the chart's end</span>`:"");
+    const cap=THRESHOLDS[parseInt(yc)]?THRESHOLDS[parseInt(yc)][0]:null;
+    const pct=cap?`${((s/1e6)/cap*100).toFixed(1)}%`:"";
+    return `<div class="rc-year"><span class="rcy-yr">${yc}</span>`+
+           `<span class="rcy-sal">${fmtM(s)}</span>`+
+           `<span class="rcy-pct">${pct}</span>`+
+           `<span class="rcy-tag ${opt?"t-opt":""}">${opt?"opt":""}</span></div>`;
+  }).filter(Boolean).join("");
+  cbody.innerHTML=rowsHTML;
+  const tot=$("apcTotal"); if(tot) tot.textContent=fmtM(guar);
+
+  // Set the live chart preview (blue) FIRST so yearHasData sees it, then widen
+  // the display window to cover the (possibly future) seasons and rebuild slider.
+  previewContract = ST.yearCols.some(yc=>parseSalary(dict[yc])) ? {name:name||("Pick #"+pick), dict} : null;
+  ST.displayEnd=ST.lastDataYearIdx();
+  if(ST.displayEnd<ST.displayStart) ST.displayStart=0;
+  rebuildYearSlider();
+  redrawChart();
 }
 
 function submitAddPlayer(){
   const err=$("addPlayerErr"); err.textContent="";
   if(addPlayerMode==="draft"){
-    const name=($("draftName").value||"").trim();
+    const name=draftNameVal.trim();
     if(!name){err.textContent="Enter the player's name."; return;}
     if(ST.active.some(p=>p["Player"]===name)){err.textContent="A player with that name is already on the roster."; return;}
-    const pick=parseInt($("draftPick").value);
+    const pick=draftPickNum;
     if(isNaN(pick)||pick<1||pick>ROOKIE_SCALE.length){err.textContent="Enter a pick from 1 to "+ROOKIE_SCALE.length+"."; return;}
-    const startIdx=parseInt($("draftYear").value)||0;
-    const dict=buildRookieContract(name,pick,startIdx);
+    const startSeason=$("draftYear").value;
+    const dict=buildRookieContract(name,pick,startSeason);   // extends yearCols if needed
     if(!dict || !ST.yearCols.some(yc=>parseSalary(dict[yc]))){
-      err.textContent="That rookie season leaves no years on the chart. Pick an earlier season."; return;
+      err.textContent="Couldn't build that rookie contract. Check the pick and draft year."; return;
     }
     ST.addPlayer(dict, "Draft");
-    addPlayerOpen=false; rebuildSidebar(); redrawChart();
+    // Keep any newly-added future seasons visible.
+    ST.displayEnd=ST.lastDataYearIdx();
+    addPlayerOpen=false; previewContract=null; rebuildSidebar(); rebuildYearSlider(); redrawChart();
     return;
   }
-  const team=$("addPlayerTeam").value;
-  const i=parseInt($("addPlayerSelect").value);
-  if(isNaN(i)||i<0||!addPlayerCache[i]){err.textContent="Pick a player."; return;}
+  const cand=selectedCandidate();
+  if(!cand){err.textContent="Pick a player."; return;}
   const startIdx=parseInt($("addPlayerYear").value)||0;
-  const src=addPlayerCache[i];
+  const src=cand.src;
+  const fromLabel=cand.team||"League";
 
-  if(!addHasExistingContract(src,startIdx)){
-    // Manual contract authored via the inline $M/% rows.
+  if(!src || !addHasExistingContract(src,startIdx)){
+    // Manual contract authored via the inline $M/% rows (no contract on file, or
+    // none at/after the chosen season — e.g. a two-way player getting a deal).
     if(!addContractRows.length){err.textContent="Enter a salary for the contract."; return;}
     for(const er of addContractRows){
       if(isNaN(er.value)||er.value<0){err.textContent=`Enter a salary for ${er.yr}.`; return;}
     }
-    const dict=buildManualContract(src["Player"], src["Age"]);
+    const dict=buildManualContract(cand.name, (src&&src["Age"])||"");
     if(!ST.yearCols.some(yc=>parseSalary(dict[yc]))){
       err.textContent="That contract leaves no seasons on the chart."; return;
     }
-    ST.addPlayer(dict, team);
-    addPlayerOpen=false; addContractRows=[]; rebuildSidebar(); redrawChart();
+    ST.addPlayer(dict, fromLabel);
+    addPlayerOpen=false; addContractRows=[]; previewContract=null; rebuildSidebar(); redrawChart();
     return;
   }
 
@@ -2566,8 +3030,8 @@ function submitAddPlayer(){
     err.textContent="That start year leaves no seasons on the chart. Pick an earlier season.";
     return;
   }
-  ST.addPlayer(dict, team);
-  addPlayerOpen=false; addContractRows=[]; rebuildSidebar(); redrawChart();
+  ST.addPlayer(dict, fromLabel);
+  addPlayerOpen=false; addContractRows=[]; previewContract=null; rebuildSidebar(); redrawChart();
 }
 
 /* ── Extension dialog ── */
@@ -2733,7 +3197,8 @@ def main():
 
     print(f"Scanning {csv_folder}/ for team CSVs…")
     teams = discover_teams(csv_folder)
-    html = build_html(teams)
+    players = load_players(csv_folder)
+    html = build_html(teams, players)
     with open(out_html, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"\nWrote {out_html}  ({len(teams)} team(s), {len(html)//1024} KB)")
