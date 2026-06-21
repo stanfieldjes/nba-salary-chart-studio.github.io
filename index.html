@@ -352,6 +352,36 @@
   .inline-form .if-row input[type=number]{width:60px; background:var(--card); color:var(--text);
     border:1px solid var(--line); border-radius:5px; padding:4px 6px; font:inherit;}
   .inline-form .ifr-calc{color:var(--subtext); font-size:10px; font-family:Consolas,Menlo,monospace;}
+  .inline-form .if-terms{display:flex; flex-direction:column; gap:8px; margin:4px 0 8px;}
+  .inline-form .if-term{display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--text);}
+  .inline-form .if-term .if-pctval{color:var(--accent);}
+  .inline-form .if-term input[type=number]{width:80px; background:var(--card); color:var(--text);
+    border:1px solid var(--line); border-radius:5px; padding:4px 6px; font:inherit;}
+  .inline-form .if-term input[type=range]{width:100%;}
+  .inline-form .if-prehdr{font-size:10px; color:var(--subtext); font-style:italic; margin:2px 0 4px;}
+  .inline-form .if-prerow{display:flex; align-items:center; gap:8px; margin:4px 0; font-size:11px;}
+  .inline-form .if-prerow .ifr-yr{width:54px; font-weight:600; color:var(--text); font-family:Consolas,Menlo,monospace;}
+  .inline-form .if-prerow .ifp-amt{color:var(--text); font-weight:600; font-family:Consolas,Menlo,monospace; min-width:64px;}
+  .inline-form .if-prerow .ifr-calc{flex:1 1 auto;}
+  /* Small clickable OPT box on the final preview row — looks like a committed
+     option badge but framed in a little box; dim outline until toggled on. */
+  .inline-form .ifp-opt{flex:0 0 auto; font:inherit; font-size:9px; font-weight:700; text-transform:uppercase;
+    color:var(--blue); background:transparent; border:1px solid rgba(106,176,245,0.55);
+    border-radius:4px; padding:1px 5px; cursor:pointer; line-height:1.5;}
+  .inline-form .ifp-opt:hover{background:rgba(106,176,245,0.15);}
+  .inline-form .ifp-opt.on{color:#fff; background:var(--blue); border-color:var(--blue);}
+  .inline-form .ifp-opt.ifp-opt-empty{visibility:hidden; cursor:default;}
+  .inline-form .if-muted{font-size:10px; color:var(--subtext);}
+  /* Shared contract terms: control row (years · total · change%) */
+  .inline-form .mc-row{display:flex; align-items:flex-end; gap:8px; margin:4px 0 8px;}
+  .inline-form .mc-field{display:flex; flex-direction:column; gap:3px; font-size:10px; color:var(--subtext);}
+  .inline-form .mc-field input[type=number]{background:var(--card); color:var(--text);
+    border:1px solid var(--line); border-radius:5px; padding:4px 6px; font:inherit; font-size:11px; height:25px; box-sizing:border-box;}
+  .inline-form .mc-field .mc-total{width:64px;}
+  .inline-form .mc-field .mc-years{width:46px;}
+  .inline-form .mc-pctwrap{position:relative; display:inline-flex; align-items:center;}
+  .inline-form .mc-pctwrap .mc-pct{width:56px; padding-right:16px;}
+  .inline-form .mc-pctwrap .mc-pctsign{position:absolute; right:6px; font-size:11px; color:var(--subtext); pointer-events:none;}
   .inline-form .unit-tog{display:flex; border:1px solid var(--line); border-radius:5px; overflow:hidden;}
   .inline-form .unit-tog button{border:none; border-radius:0; padding:4px 7px; font-size:10.5px;
     background:var(--sidebar); color:var(--subtext); cursor:pointer;}
@@ -362,7 +392,6 @@
   .inline-form .if-btns .rc-btn{flex:1;}
   .rc-btn.rc-extend{color:var(--blue); border-color:var(--blue);}
   .rc-btn.rc-extend:hover{background:var(--blue); color:#fff;}
-  /* inline "make option year" toggle button */
   .if-optbtn{display:block; width:100%; margin-top:8px; font-size:11px; font-weight:600;
     color:var(--blue); border:1px solid rgba(106,176,245,0.55); background:rgba(106,176,245,0.10);}
   .if-optbtn:hover{background:rgba(106,176,245,0.20);}
@@ -506,22 +535,6 @@
     </div>
   </div>
 </div>
-
-<dialog id="extDialog">
-  <h2>Add extension</h2>
-  <div class="f-label">Player (expiring contracts)</div>
-  <select id="extPlayer"></select>
-  <div class="f-label">Extension years (consecutive, starting from the first)</div>
-  <div class="chk-row" id="extYears"></div>
-  <div class="f-label" id="extSalHdr" style="display:none">Salary per year</div>
-  <div id="extSalaries" style="margin-top:6px"></div>
-  <label style="display:flex;gap:6px;align-items:center;margin-top:12px;font-size:12px">
-    <input type="checkbox" id="extOptFlag"> Final selected year is an option year</label>
-  <div class="err" id="extErr"></div>
-  <div class="dlg-btns">
-    <button id="extCancel">Cancel</button>
-    <button class="b-green" id="extSubmit">Add extension</button></div>
-</dialog>
 
 <dialog id="tradeDialog">
   <h2>Remove player</h2>
@@ -1010,7 +1023,8 @@ class RosterState{
       // Tagged isPreview=true so the chart paints it blue and ignores clicks.
       if(typeof previewContract!=='undefined' && previewContract){
         const ps=parseSalary(previewContract.dict[yc]);
-        if(ps) entries.push([previewContract.name, ps, false, true]);
+        const isOpt = !!(previewContract.optYears && previewContract.optYears.has(yc));
+        if(ps) entries.push([previewContract.name, ps, isOpt, true]);
       }
       if(entries.length) data.set(yc,entries);
     }
@@ -1312,10 +1326,12 @@ function renderChart(ctx,state,x0,y0,W,H,s){
       ctx.save();
       if(dim) ctx.globalAlpha=0.28;
       if(isPrev){
-        // Blue translucent fill marks the staged (not-yet-added) contract.
+        // Blue translucent fill marks the staged (not-yet-added) contract; an
+        // option year additionally gets the diagonal hatch, like a committed one.
         ctx.fillStyle=THEME.accent||"#5EA8ED"; ctx.globalAlpha=(ctx.globalAlpha||1)*0.34;
         ctx.fillRect(x,top,barW,h);
         ctx.globalAlpha=1;
+        if(isOpt){ ctx.fillStyle=hatch; ctx.fillRect(x,top,barW,h); }
       }else{
         ctx.fillStyle=THEME.bar; ctx.fillRect(x,top,barW,h);
         if(isOpt){ctx.fillStyle=hatch; ctx.fillRect(x,top,barW,h);}
@@ -1751,7 +1767,9 @@ function rebuildSidebar(){
       // A single inline form stages one OR MORE consecutive years and commits
       // them together. Extension years are removed the same way as standard
       // years — via the remove-seasons toggle — so there's no separate remove button.
-      const canExt=ST.expiringContracts().some(([n])=>n===name);
+      // A player may hold at most one extension. Once they have one, no further
+      // extension can be added (the years it created are edited via remove-mode).
+      const canExt=!hasExtNow && ST.expiringContracts().some(([n])=>n===name);
       const extFormOpen = inlineForm && inlineForm.name===name && inlineForm.mode==="extend";
       if(inRemove){
         /* remove-mode: no extension controls */
@@ -1760,8 +1778,8 @@ function rebuildSidebar(){
       }else if(canExt){
         const ay=document.createElement("div"); ay.className="rc-addyear";
         const nextYr=extNextYear(name);
-        ay.innerHTML=`<span class="ay-plus">+</span><span>${hasExtNow?`Add year (${nextYr})`:`Add extension (${nextYr})`}</span>`;
-        ay.onclick=()=>{ inlineForm={name,mode:"extend"}; inlineExtRows=[]; rebuildSidebar(); };
+        ay.innerHTML=`<span class="ay-plus">+</span><span>Add extension (${nextYr})</span>`;
+        ay.onclick=()=>{ inlineForm={name,mode:"extend"}; extState=null; previewContract=null; rebuildSidebar(); };
         body.appendChild(ay);
       }else if(!hasExtNow){
         const ay=document.createElement("div"); ay.className="rc-addyear disabled";
@@ -1846,11 +1864,125 @@ function buildAddPlayerPanel(){
   return wrap;
 }
 
-/* ── Inline extension entry (rendered inside a player card) ──
-   Holds one or more consecutive years that are committed together in a single
-   move. Each entry: {yr, unit:"dollar"|"percent", value:Number, isOpt:Bool}. */
-let inlineExtRows=[];   // working rows for the open extension form
+/* ── Shared contract-terms model (used by BOTH the manual new-contract form and
+   the extension form) ──────────────────────────────────────────────────────
+   A contract is defined by: total ($M), a list of consecutive season strings,
+   and a SIGNED percent change (−8…+8; the sign is the raise/decline direction).
+   splitContract distributes the total across the years; the total itself is
+   capped so year 1 never exceeds 35% of its season cap. One implementation. */
 function capForYearM(yr){const t=THRESHOLDS[parseInt(yr)]; return (t?t[0]:154.647);}
+// Σ(1+p)^i for i in 0..n-1 — the factor relating year-1 base salary to the total.
+function _rampDenom(p,n){ let d=0; for(let i=0;i<n;i++) d+=Math.pow(1+p,i); return d; }
+// Largest total ($M) that keeps year 1 at or below 35% of its season cap, given
+// the chosen years and signed percent. Returns Infinity if no years.
+function maxTotalForTerms(yrs, pct){
+  if(!yrs||!yrs.length) return Infinity;
+  const p=pct/100;
+  return 0.35*capForYearM(yrs[0])*_rampDenom(p,yrs.length);
+}
+function splitContract(total, yrs, pct){
+  if(!yrs||!yrs.length||isNaN(total)||total<0) return null;
+  const p=pct/100, n=yrs.length;
+  const base=(total*1e6)/_rampDenom(p,n);
+  return {rows:yrs.map((yr,i)=>[yr, base*Math.pow(1+p,i)])};
+}
+/* buildTermsBlock — renders the shared control row (Years · Total · Change %) plus
+   a read-only per-year preview, wired to a `state` object {total, years, pct,
+   isOpt} and a yearsList(state.years)->[seasons] fn. `pct` is signed. The Total is
+   capped: if the user enters more than maxTotalForTerms allows (year 1 would
+   exceed 35% of cap), the value reverts to that maximum. Calls opts.onChange()
+   after any change. Returns {el, preview()}. */
+function buildTermsBlock(state, yearsForCount, opts){
+  opts=opts||{};
+  const maxYears=opts.maxYears||5;
+  const el=document.createElement("div");
+
+  const ctl=document.createElement("div"); ctl.className="mc-row";
+  ctl.innerHTML=
+    `<label class="mc-field"><span>Years</span>`+
+      `<input type="number" step="1" min="1" max="${maxYears}" class="mc-years"></label>`+
+    `<label class="mc-field"><span>Total ($M)</span>`+
+      `<input type="number" step="0.1" min="0" placeholder="0.0" class="mc-total"></label>`+
+    `<label class="mc-field"><span>Change</span>`+
+      `<span class="mc-pctwrap"><input type="number" step="0.5" min="-8" max="8" placeholder="0" class="mc-pct"><span class="mc-pctsign">%</span></span></label>`;
+  const yearsInp=ctl.querySelector(".mc-years");
+  const totalInp=ctl.querySelector(".mc-total");
+  const pctInp=ctl.querySelector(".mc-pct");
+  yearsInp.value=state.years;
+  if(!isNaN(state.total)) totalInp.value=state.total;
+  pctInp.value=isNaN(state.pct)||state.pct===0?"":state.pct;
+  el.appendChild(ctl);
+
+  const preHdr=document.createElement("div"); preHdr.className="if-prehdr";
+  preHdr.textContent="Per-year preview (not editable)";
+  el.appendChild(preHdr);
+  const preBox=document.createElement("div"); preBox.className="if-prebox";
+  el.appendChild(preBox);
+
+  // Enforce the 35%-of-cap-on-year-1 ceiling by snapping the entered total down.
+  // Returns true if it changed the value (so we can flash a note).
+  let cappedNote=false;
+  function enforceTotalCap(){
+    const yrs=yearsForCount(state.years);
+    const cap=maxTotalForTerms(yrs, isNaN(state.pct)?0:state.pct);
+    cappedNote=false;
+    if(!isNaN(state.total) && state.total>cap+1e-9){
+      state.total=Math.floor(cap*100)/100;   // round down to cents so it stays ≤ cap
+      totalInp.value=state.total;
+      cappedNote=true;
+    }
+  }
+  function preview(){
+    preBox.innerHTML="";
+    const res=splitContract(state.total, yearsForCount(state.years), isNaN(state.pct)?0:state.pct);
+    if(!res){ preBox.innerHTML='<div class="if-muted">Enter a total to preview.</div>'; return; }
+    const optOn = opts.opt && opts.opt.enabled();
+    res.rows.forEach(([yr,v],i)=>{
+      const isLast=i===res.rows.length-1;
+      const r=document.createElement("div"); r.className="if-prerow";
+      r.innerHTML=`<span class="ifr-yr">${yr}</span>`+
+        `<span class="ifp-amt">$${(v/1e6).toFixed(2)}M</span>`+
+        `<span class="ifr-calc">= ${(v/(capForYearM(yr)*1e6)*100).toFixed(1)}%</span>`;
+      // The final season of a 2+ year deal can be flagged an option — shown as a
+      // small clickable blue OPT box in the tag slot, matching a committed row.
+      const tag=document.createElement("button"); tag.type="button"; tag.className="ifp-opt";
+      if(optOn && isLast){
+        const paint=()=>{ tag.classList.toggle("on", opts.opt.get()); tag.textContent="opt"; };
+        tag.onclick=()=>{ opts.opt.set(!opts.opt.get()); paint(); };
+        paint();
+      }else{
+        tag.classList.add("ifp-opt-empty"); tag.tabIndex=-1; tag.textContent="";
+      }
+      r.appendChild(tag);
+      preBox.appendChild(r);
+    });
+    if(cappedNote){
+      const n=document.createElement("div"); n.className="if-muted"; n.style.marginTop="4px";
+      n.textContent=`Total capped so year 1 stays at 35% of the cap (max $${state.total.toFixed(2)}M for these terms).`;
+      preBox.appendChild(n);
+    }
+  }
+  const fire=()=>{ enforceTotalCap(); preview(); if(opts.onChange) opts.onChange(); };
+  yearsInp.oninput=()=>{
+    let y=parseInt(yearsInp.value); if(isNaN(y)) return;
+    y=Math.max(1,Math.min(maxYears,y)); state.years=y; yearsInp.value=y;
+    if(opts.onYears) opts.onYears(); fire(); };
+  totalInp.oninput=()=>{ state.total=parseFloat(totalInp.value); preview(); if(opts.onChange) opts.onChange(); };
+  // Snap the total only when the user finishes editing it (not on every keystroke,
+  // so typing "12" through "1" then "2" isn't fought by the cap mid-entry).
+  totalInp.onchange=()=>{ state.total=parseFloat(totalInp.value); fire(); };
+  pctInp.oninput=()=>{ let p=parseFloat(pctInp.value); state.pct=isNaN(p)?0:Math.max(-8,Math.min(8,p));
+    if(!isNaN(p)&&(p<-8||p>8)) pctInp.value=state.pct; fire(); };
+
+  preview();
+  return {el, preview};
+}
+
+/* ── Inline extension entry (rendered inside a player card) ──
+   Terms live in the shared `extState` object; the year list is derived from the
+   player's first extendable season forward, capped by years and the league
+   extension cap. */
+let extState=null;            // {total, years, pct, dir, isOpt} or null when closed
 // The next season available to extend into = the season right after the player's
 // current last contracted year (their expiring year). Uses season-string math so
 // it works past the documented range.
@@ -1860,116 +1992,97 @@ function extNextYear(name){
   if(!lastYr) return null;
   return nextSeason(lastYr);
 }
-// The season following the last year currently staged in the open form (so the
-// form can offer consecutive years without committing first). Returns null once
-// the player's extension-year cap (4 acquired / 5 own) would be exceeded.
-function extFormNextYear(name){
-  const first=extNextYear(name); if(!first) return null;
-  const committed=ST.extYearCount(name);
-  const staged=inlineExtRows.length;
-  // Cap is on the TOTAL number of extension years (committed + staged).
-  if(committed+staged >= ST.EXT_CAP(name)) return null;
-  if(!staged) return first;
-  const lastYr=inlineExtRows[inlineExtRows.length-1].yr;
-  return nextSeason(lastYr);
+// Up to `count` consecutive seasons available to extend into, starting at the
+// player's first extendable year, limited by the league extension cap. Uses
+// season-string math so it can run past the charted range (addExtension extends
+// yearCols on commit).
+function extYearList(name, count){
+  const first=extNextYear(name); if(!first) return [];
+  const room=ST.EXT_CAP(name)-ST.extYearCount(name);
+  const n=Math.max(0, Math.min(count, room));
+  const out=[]; let y=first;
+  for(let i=0;i<n && y;i++){ out.push(y); y=nextSeason(y); }
+  return out;
+}
+function extMaxYears(name){
+  if(!extNextYear(name)) return 0;
+  return Math.max(0, ST.EXT_CAP(name)-ST.extYearCount(name));
 }
 function buildExtendForm(name){
   const wrap=document.createElement("div"); wrap.className="inline-form";
   const first=extNextYear(name);
   if(!first){ wrap.innerHTML='<div class="if-err">No season available to extend into.</div>'; return wrap; }
 
-  // Years already committed as part of this player's extension (across earlier
-  // sessions). The final year of an extension may be an option only when the
-  // extension spans 2+ years total, so these count toward that length.
-  const existingExtCount=[...ST.extensions.keys()].filter(k=>k.startsWith(name+"|")).length;
+  const maxYears=extMaxYears(name);
 
-  // Seed the first staged row if the form just opened.
-  if(!inlineExtRows.length){
-    inlineExtRows=[{yr:first, unit:"dollar", value:NaN, isOpt:false}];
-  }
+  // Seed terms when the form first opens.
+  if(!extState){ extState={total:NaN, years:1, pct:0, isOpt:false}; }
+  if(extState.years>maxYears) extState.years=Math.max(1,maxYears);
 
   const title=document.createElement("div"); title.className="if-title";
   title.textContent="Add extension";
   wrap.appendChild(title);
 
-  // Render one editable line per staged year.
-  inlineExtRows.forEach((er,ri)=>{
-    const yr=er.yr;
-    const row=document.createElement("div"); row.className="if-row";
-    row.innerHTML=`<span class="ifr-yr">${yr}</span>
-      <input type="number" step="0.1" min="0" placeholder="0.0">
-      <div class="unit-tog">
-        <button data-u="dollar" class="${er.unit==="dollar"?"on":""}">$M</button>
-        <button data-u="percent" class="${er.unit==="percent"?"on":""}">% cap</button>
-      </div><span class="ifr-calc"></span>`;
-    const inp=row.querySelector("input");
-    const calc=row.querySelector(".ifr-calc");
-    if(!isNaN(er.value)) inp.value=er.value;
-    function upd(){ if(isNaN(er.value)){calc.textContent=""; return;}
-      if(er.unit==="percent") calc.textContent=`= $${(capForYearM(yr)*er.value/100).toFixed(1)}M`;
-      else calc.textContent=`= ${(er.value/capForYearM(yr)*100).toFixed(1)}%`; }
-    inp.oninput=()=>{er.value=parseFloat(inp.value); upd();};
-    row.querySelectorAll(".unit-tog button").forEach(b=>b.onclick=()=>{
-      er.unit=b.dataset.u;
-      row.querySelectorAll(".unit-tog button").forEach(x=>x.classList.toggle("on",x===b)); upd();});
-    wrap.appendChild(row);
-    upd();
-
-    // Option-year toggle — only the FINAL year of an extension may be an option,
-    // and only when the extension spans more than one year total (a one-year
-    // extension is always guaranteed). Counts years committed earlier too.
-    const isLastStaged = ri===inlineExtRows.length-1;
-    const totalExtYears = existingExtCount + inlineExtRows.length;
-    if(isLastStaged && totalExtYears>1){
-      const optBtn=document.createElement("button"); optBtn.className="rc-btn if-optbtn";
-      const paint=()=>{ optBtn.textContent=er.isOpt?"✓ Final year is an option":"Make final year an option";
-        optBtn.classList.toggle("on", er.isOpt); };
-      optBtn.onclick=()=>{ er.isOpt=!er.isOpt; paint(); };
-      paint();
-      wrap.appendChild(optBtn);
+  // Live blue preview on the chart for the staged extension. The preview dict
+  // fills only the new extension seasons; the player's existing bars stay as-is.
+  // If the staged years run past the charted range, extend the chart now so the
+  // preview is visible (trimmed back when the preview shrinks or is cancelled).
+  // When the final year is flagged an option, mark it so the chart paints it as
+  // an option segment (matching a committed option year).
+  function pushExtPreview(){
+    previewContract=null;
+    ST.trimEmptyTrailingYears();
+    const res=splitContract(extState.total, extYearList(name, extState.years), extState.pct);
+    if(res && res.rows.length){
+      const lastYr=res.rows[res.rows.length-1][0];
+      ST.ensureYearTo(lastYr);   // grow yearCols to fit future extension seasons
+      const dict={}; for(const [yr,v] of res.rows) dict[yr]="$"+Math.round(v).toLocaleString("en-US");
+      const optYears=new Set();
+      if(optEnabled() && extState.isOpt) optYears.add(lastYr);
+      previewContract = ST.yearCols.some(yc=>parseSalary(dict[yc])) ? {name, dict, optYears} : null;
     }
-  });
-
-  // "Add another year" — appends the next consecutive season as a new staged row.
-  // Whatever year was previously last can no longer be an option (only the final
-  // year may be), so clear its option flag as it loses "last" status.
-  const moreYr=extFormNextYear(name);
-  if(moreYr){
-    const more=document.createElement("div"); more.className="rc-addyear";
-    more.innerHTML=`<span class="ay-plus">+</span><span>Add another year (${moreYr})</span>`;
-    more.onclick=()=>{
-      if(inlineExtRows.length) inlineExtRows[inlineExtRows.length-1].isOpt=false;
-      inlineExtRows.push({yr:moreYr, unit:"dollar", value:NaN, isOpt:false});
-      rebuildSidebar(); };
-    wrap.appendChild(more);
-  }else if(ST.extYearCount(name)+inlineExtRows.length >= ST.EXT_CAP(name)){
-    const lim=document.createElement("div"); lim.className="rc-addyear disabled";
-    lim.innerHTML=`<span class="ay-plus">•</span><span>Max ${ST.EXT_CAP(name)}-year extension reached</span>`;
-    wrap.appendChild(lim);
+    ST.displayEnd=ST.lastDataYearIdx();
+    if(ST.displayEnd<ST.displayStart) ST.displayStart=0;
+    rebuildYearSlider();
+    redrawChart();
   }
+
+  // The final year of a 2+ year extension may be flagged an option.
+  function optEnabled(){ return extState.years>1; }
+
+  const terms=buildTermsBlock(extState, c=>extYearList(name,c), {
+    maxYears: Math.max(1,maxYears),
+    onYears: ()=>{ if(!optEnabled()) extState.isOpt=false; },
+    onChange: pushExtPreview,
+    opt: { enabled:optEnabled, get:()=>extState.isOpt, set:v=>{ extState.isOpt=v; pushExtPreview(); } },
+  });
+  wrap.appendChild(terms.el);
+  pushExtPreview();
 
   const err=document.createElement("div"); err.className="if-err"; wrap.appendChild(err);
   const btns=document.createElement("div"); btns.className="if-btns";
   const cancel=document.createElement("button"); cancel.className="rc-btn"; cancel.textContent="Cancel";
-  cancel.onclick=()=>{ inlineForm=null; inlineExtRows=[]; rebuildSidebar(); };
+  cancel.onclick=()=>{ inlineForm=null; extState=null; previewContract=null;
+    ST.trimEmptyTrailingYears(); rebuildYearSlider(); rebuildSidebar(); redrawChart(); };
   const apply=document.createElement("button"); apply.className="rc-btn rc-extend";
-  apply.textContent=inlineExtRows.length>1?"Add extension":"Add year";
+  apply.textContent="Add extension";
   apply.onclick=()=>{
     err.textContent="";
-    // Validate every staged year before committing any.
-    for(const er of inlineExtRows){
-      if(isNaN(er.value)||er.value<0){err.textContent=`Enter a salary for ${er.yr}.`; return;}
+    if(isNaN(extState.total)||extState.total<=0){err.textContent="Enter a total salary greater than 0."; return;}
+    const res=splitContract(extState.total, extYearList(name, extState.years), extState.pct);
+    const rows=res.rows;
+    const actualTotal=rows.reduce((s,[,v])=>s+v,0)/1e6;
+    const totalExtAtCommit=rows.length;
+    const p=extState.pct/100;
+    for(let i=0;i<rows.length;i++){
+      const [yr,v]=rows[i];
+      const isFinal=i===rows.length-1;
+      const label=`$${(v/1e6).toFixed(2)}M (${actualTotal.toFixed(1)}M total, ${p>=0?"+":""}${(p*100).toFixed(1)}%/yr)`;
+      const asOption=isFinal && totalExtAtCommit>1 && extState.isOpt;
+      ST.addExtension(name,yr,v,asOption,label);
     }
-    const totalExtAtCommit = existingExtCount + inlineExtRows.length;
-    for(const er of inlineExtRows){
-      const isFinal = er===inlineExtRows[inlineExtRows.length-1];
-      const v = er.unit==="percent" ? capForYearM(er.yr)*er.value/100*1e6 : er.value*1e6;
-      const label = er.unit==="percent" ? `${er.value.toFixed(1)}% of cap = $${(v/1e6).toFixed(2)}M` : `$${(v/1e6).toFixed(2)}M`;
-      // Only the final year of a 2+ year extension may be an option.
-      const asOption = isFinal && totalExtAtCommit>1 && er.isOpt;
-      ST.addExtension(name,er.yr,v,asOption,label);
-    }
-    inlineForm=null; inlineExtRows=[]; rebuildYearSlider(); rebuildSidebar(); redrawChart();
+    inlineForm=null; extState=null; previewContract=null;
+    rebuildYearSlider(); rebuildSidebar(); redrawChart();
   };
   btns.appendChild(cancel); btns.appendChild(apply); wrap.appendChild(btns);
   return wrap;
@@ -2300,9 +2413,28 @@ function clearSelection(){
 /* ── Add Player (inline panel) ── */
 let addPlayerMode="league";   // "league" (search the league) or "draft" (rookie scale)
 // When a league player has no existing salary at the chosen join season, the user
-// authors a contract here — same $M/% rows as the extension form.
-// Each row: {yr, unit:"dollar"|"percent", value:Number, isOpt:Bool}.
-let addContractRows=[];
+// authors a contract here with one set of terms: a total ($M) spread across a
+// chosen number of consecutive years (1–5) with a fixed year-over-year percent
+// change, either increasing or decreasing. Year 1 is clamped to 35% of that
+// season's cap. Per-year figures are derived (not individually edited).
+// addContract: {startYr, total:Number, years:Number, pct:Number(signed), isOpt:Bool}
+let addContract=null;
+// Consecutive season strings starting at startYr, length = years. Built via
+// season-string math so it can run past the charted range (the form extends the
+// chart to fit during preview/commit).
+function manualYearList(startYr, years){
+  if(!startYr) return [];
+  const out=[]; let y=startYr;
+  for(let i=0;i<years && y;i++){ out.push(y); y=nextSeason(y); }
+  return out;
+}
+// Split addContract.total across its years via the shared splitContract.
+function manualPerYear(){
+  if(!addContract) return null;
+  return splitContract(addContract.total,
+    manualYearList(addContract.startYr, addContract.years),
+    addContract.pct);
+}
 
 // ── League candidate model ──
 // Candidates come from the league-wide players.csv (PLAYERS), filterable by team
@@ -2388,7 +2520,7 @@ function openAddPlayerPanel(){
   leagueCandidates=buildLeagueCandidates();
   // League mode needs candidates; fall back to draft only if there are none.
   if(!leagueCandidates.length) addPlayerMode="draft";
-  addPlayerFilterTeam="*"; addPlayerSearch=""; addPlayerSel=null; addContractRows=[];
+  addPlayerFilterTeam="*"; addPlayerSearch=""; addPlayerSel=null; addContract=null;
   previewContract=null; draftPickNum=1; draftNameVal="";
   addPlayerOpen=true;
   rebuildSidebar();
@@ -2440,7 +2572,7 @@ function rebuildCandidateList(){
     const pos=c.info&&c.info.position?`<span class="apl-pos">${c.info.position}</span>`:"";
     row.innerHTML=`<span class="apl-name">${c.name}</span>${pos}${tag}`;
     row.onclick=()=>{
-      addPlayerSel=c.name; addContractRows=[];
+      addPlayerSel=c.name; addContract=null;
       rebuildCandidateList();      // repaint selection highlight
       updateAddPlayerPreview();
     };
@@ -2492,17 +2624,38 @@ function leaguePreviewDict(){
   if(src && addHasExistingContract(src,startIdx)){
     return buildShiftedContract(src,startIdx).dict;
   }
-  // manual: only if rows hold at least one usable value
-  if(addContractRows.length && addContractRows.some(er=>!isNaN(er.value)&&er.value>0)){
+  // manual: only if terms produce at least one usable season
+  if(manualPerYear()){
     return buildManualContract(cand.name, (src&&src["Age"])||"");
   }
   return null;
 }
-// Apply the staged contract to the live chart preview (blue) and redraw.
+// Apply the staged contract to the live chart preview (blue) and redraw. If the
+// staged manual contract runs past the charted range, grow yearCols to fit (and
+// trim back when it shrinks), mirroring the draft-pick preview behavior.
 function refreshPreviewOnChart(){
   const cand=selectedCandidate();
+  previewContract=null;
+  ST.trimEmptyTrailingYears();
   const dict=cand?leaguePreviewDict():null;
-  previewContract = (cand && dict && ST.yearCols.some(yc=>parseSalary(dict[yc]))) ? {name:cand.name, dict} : null;
+  if(cand && dict){
+    // Ensure every season the staged contract touches exists on the chart.
+    let lastYr=null;
+    for(const k of Object.keys(dict)){ if(/^\d{4}-\d{2}$/.test(k) && parseSalary(dict[k])!=null){
+      if(lastYr===null || seasonStartYear(k)>seasonStartYear(lastYr)) lastYr=k; } }
+    if(lastYr) ST.ensureYearTo(lastYr);
+    // For a manually-authored deal, flag the final year as an option when chosen
+    // so the blue preview segment paints as an option (matching committed rows).
+    const optYears=new Set();
+    if(addContract && addContract.isOpt && addContract.years>1){
+      const yrs=manualYearList(addContract.startYr, addContract.years);
+      if(yrs.length) optYears.add(yrs[yrs.length-1]);
+    }
+    previewContract = ST.yearCols.some(yc=>parseSalary(dict[yc])) ? {name:cand.name, dict, optYears} : null;
+  }
+  ST.displayEnd=ST.lastDataYearIdx();
+  if(ST.displayEnd<ST.displayStart) ST.displayStart=0;
+  rebuildYearSlider();
   redrawChart();
 }
 function updateAddPlayerPreview(){
@@ -2510,7 +2663,7 @@ function updateAddPlayerPreview(){
   const cand=selectedCandidate();
   if(!cand){
     box.innerHTML='<div class="ap-hint">Select a player to preview their contract.</div>';
-    addContractRows=[]; clearPreview(); return;
+    addContract=null; clearPreview(); return;
   }
   const src=cand.src;
 
@@ -2532,7 +2685,7 @@ function updateAddPlayerPreview(){
   ST.yearCols.forEach((yc,idx)=>{const o=document.createElement("option"); o.value=idx; o.textContent=yc; ysel.appendChild(o);});
   if(!ST.yearCols.length){const o=document.createElement("option"); o.value="0"; o.textContent="(no seasons)"; ysel.appendChild(o);}
   ysel.value=startIdx;
-  ysel.onchange=()=>{ addContractRows=[]; updateAddPlayerPreview(); };
+  ysel.onchange=()=>{ addContract=null; updateAddPlayerPreview(); };
   yrow.appendChild(ysel);
   wrap.appendChild(yrow);
 
@@ -2560,7 +2713,7 @@ function updateAddPlayerPreview(){
 
   if(src && addHasExistingContract(src,startIdx)){
     // ── Carry-over: keep the player's real figures from the join year onward ──
-    addContractRows=[];
+    addContract=null;
     const {dict,optionYears}=buildShiftedContract(src,startIdx);
     const optSet=new Set(optionYears);
     let guar=0;
@@ -2587,71 +2740,38 @@ function updateAddPlayerPreview(){
   // Push the staged contract to the chart in blue.
   refreshPreviewOnChart();
 }
-/* Render the inline contract-authoring form (mirrors the extension form: per-year
-   $M / % cap rows, an "add another year" affordance, and an option flag on the
-   final year of a 2+ year deal). Rows are staged in addContractRows. */
+/* Render the inline contract-authoring form using the SAME shared terms block as
+   the extension form: one control row (Years · Total · Change %) plus a read-only
+   per-year preview. Terms live in the single addContract object. */
 function renderAddContractForm(box, startIdx){
   const startYr=ST.yearCols[startIdx];
-  if(!startYr){box.textContent=""; addContractRows=[]; return;}
-  // Seed (or re-seed) the first staged row when the form first appears or the
-  // chosen start season changes.
-  if(!addContractRows.length || ST.yearCols.indexOf(addContractRows[0].yr)!==startIdx){
-    addContractRows=[{yr:startYr, unit:"dollar", value:NaN, isOpt:false}];
+  if(!startYr){box.textContent=""; addContract=null; return;}
+  // Seed (or re-seed) terms when the form first appears or the start season moves.
+  if(!addContract || addContract.startYr!==startYr){
+    addContract={startYr, total:NaN, years:1, pct:0, isOpt:false};
   }
+  // Up to a 5-year deal; seasons past the charted range are added on preview.
+  const maxYears=5;
+  if(addContract.years>maxYears) addContract.years=Math.max(1,maxYears);
+
   box.innerHTML="";
   const form=document.createElement("div"); form.className="inline-form ap-contract";
   const title=document.createElement("div"); title.className="if-title";
   title.textContent="No contract on file — enter one:";
   form.appendChild(title);
 
-  addContractRows.forEach((er,ri)=>{
-    const yr=er.yr;
-    const row=document.createElement("div"); row.className="if-row";
-    row.innerHTML=`<span class="ifr-yr">${yr}</span>
-      <input type="number" step="0.1" min="0" placeholder="0.0">
-      <div class="unit-tog">
-        <button data-u="dollar" class="${er.unit==="dollar"?"on":""}">$M</button>
-        <button data-u="percent" class="${er.unit==="percent"?"on":""}">% cap</button>
-      </div><span class="ifr-calc"></span>`;
-    const inp=row.querySelector("input");
-    const calc=row.querySelector(".ifr-calc");
-    if(!isNaN(er.value)) inp.value=er.value;
-    function upd(){ if(isNaN(er.value)){calc.textContent=""; }
-      else if(er.unit==="percent") calc.textContent=`= $${(capForYearM(yr)*er.value/100).toFixed(1)}M`;
-      else calc.textContent=`= ${(er.value/capForYearM(yr)*100).toFixed(1)}%`;
-      refreshManualPreview(); }
-    inp.oninput=()=>{er.value=parseFloat(inp.value); upd();};
-    row.querySelectorAll(".unit-tog button").forEach(b=>b.onclick=()=>{
-      er.unit=b.dataset.u;
-      row.querySelectorAll(".unit-tog button").forEach(x=>x.classList.toggle("on",x===b)); upd();});
-    form.appendChild(row);
-    upd();
+  // Toggling the option flag changes the guaranteed total, so refresh the chart
+  // preview and the displayed total when it flips.
+  function optEnabled(){ return addContract.years>1; }
 
-    // Only the final year of a 2+ year deal may be an option.
-    const isLast = ri===addContractRows.length-1;
-    if(isLast && addContractRows.length>1){
-      const optBtn=document.createElement("button"); optBtn.className="rc-btn if-optbtn";
-      const paint=()=>{ optBtn.textContent=er.isOpt?"✓ Final year is an option":"Make final year an option";
-        optBtn.classList.toggle("on", er.isOpt); };
-      optBtn.onclick=()=>{ er.isOpt=!er.isOpt; paint(); refreshManualPreview(); };
-      paint();
-      form.appendChild(optBtn);
-    }
+  const terms=buildTermsBlock(addContract, y=>manualYearList(startYr,y), {
+    maxYears,
+    onYears: ()=>{ if(!optEnabled()) addContract.isOpt=false; },
+    onChange: refreshManualPreview,
+    opt: { enabled:optEnabled, get:()=>addContract.isOpt,
+           set:v=>{ addContract.isOpt=v; refreshManualPreview(); } },
   });
-
-  // "Add another year" — append the next consecutive season.
-  const lastYr=addContractRows[addContractRows.length-1].yr;
-  const nextIdx=ST.yearCols.indexOf(lastYr)+1;
-  const moreYr=ST.yearCols[nextIdx];
-  if(moreYr){
-    const more=document.createElement("div"); more.className="rc-addyear";
-    more.innerHTML=`<span class="ay-plus">+</span><span>Add another year (${moreYr})</span>`;
-    more.onclick=()=>{
-      addContractRows[addContractRows.length-1].isOpt=false;  // only final year may be option
-      addContractRows.push({yr:moreYr, unit:"dollar", value:NaN, isOpt:false});
-      updateAddPlayerPreview(); };
-    form.appendChild(more);
-  }
+  form.appendChild(terms.el);
   box.appendChild(form);
 }
 // While authoring a manual contract, keep the preview total and the blue chart
@@ -2660,7 +2780,8 @@ function refreshManualPreview(){
   const cand=selectedCandidate(); if(!cand) return;
   const tot=$("apcTotal");
   if(tot){
-    if(addContractRows.some(er=>!isNaN(er.value)&&er.value>0)){
+    const res=manualPerYear();
+    if(res){
       const dict=buildManualContract(cand.name,"");
       const guar=parseSalary(dict[ST.guaranteedCol])||0;
       tot.textContent=fmtM(guar);
@@ -2674,14 +2795,17 @@ function refreshManualPreview(){
 function buildManualContract(name, age){
   const dict={"Player":name,"Age":age||""};
   for(const yc of ST.yearCols) dict[yc]="";
+  const res=manualPerYear();
   let guaranteed=0;
-  addContractRows.forEach((er,ri)=>{
-    const v = er.unit==="percent" ? capForYearM(er.yr)*er.value/100*1e6 : er.value*1e6;
-    dict[er.yr]="$"+Math.round(v).toLocaleString("en-US");
-    const isLast=ri===addContractRows.length-1;
-    const asOption=isLast && addContractRows.length>1 && er.isOpt;
-    if(!asOption) guaranteed+=Math.round(v);
-  });
+  if(res){
+    const rows=res.rows;
+    rows.forEach(([yr,v],i)=>{
+      dict[yr]="$"+Math.round(v).toLocaleString("en-US");
+      const isLast=i===rows.length-1;
+      const asOption=isLast && rows.length>1 && addContract.isOpt;
+      if(!asOption) guaranteed+=Math.round(v);
+    });
+  }
   dict[ST.guaranteedCol]="$"+guaranteed.toLocaleString("en-US");
   return dict;
 }
@@ -2860,18 +2984,17 @@ function submitAddPlayer(){
   const fromLabel=cand.team||"League";
 
   if(!src || !addHasExistingContract(src,startIdx)){
-    // Manual contract authored via the inline $M/% rows (no contract on file, or
-    // none at/after the chosen season — e.g. a two-way player getting a deal).
-    if(!addContractRows.length){err.textContent="Enter a salary for the contract."; return;}
-    for(const er of addContractRows){
-      if(isNaN(er.value)||er.value<0){err.textContent=`Enter a salary for ${er.yr}.`; return;}
+    // Manual contract authored via the inline total/years/% controls (no contract
+    // on file, or none at/after the chosen season — e.g. a two-way player).
+    if(!addContract || isNaN(addContract.total) || addContract.total<=0){
+      err.textContent="Enter a total salary greater than 0."; return;
     }
     const dict=buildManualContract(cand.name, (src&&src["Age"])||"");
     if(!ST.yearCols.some(yc=>parseSalary(dict[yc]))){
       err.textContent="That contract leaves no seasons on the chart."; return;
     }
     ST.addPlayer(dict, fromLabel);
-    addPlayerOpen=false; addContractRows=[]; previewContract=null; rebuildSidebar(); redrawChart();
+    addPlayerOpen=false; addContract=null; previewContract=null; rebuildSidebar(); redrawChart();
     return;
   }
 
@@ -2882,121 +3005,8 @@ function submitAddPlayer(){
     return;
   }
   ST.addPlayer(dict, fromLabel);
-  addPlayerOpen=false; addContractRows=[]; previewContract=null; rebuildSidebar(); redrawChart();
+  addPlayerOpen=false; addContract=null; previewContract=null; rebuildSidebar(); redrawChart();
 }
-
-/* ── Extension dialog ── */
-const extDlg=$("extDialog"); let extExpiring=[];
-function openExtensionDialog(preName){
-  if(!ST) return;
-  extExpiring=ST.expiringContracts();
-  if(!extExpiring.length){alert("No players with expiring contracts found."); return;}
-  const sel=$("extPlayer"); sel.innerHTML="";
-  extExpiring.forEach(([n,y,s],i)=>{const o=document.createElement("option");
-    o.value=i; o.textContent=`${n} — last year ${y} (${fmtM(s)})`; sel.appendChild(o);});
-  let idx=0;
-  if(preName){ const fi=extExpiring.findIndex(([n])=>n===preName); if(fi>=0) idx=fi; }
-  sel.value=idx; $("extOptFlag").checked=false; $("extErr").textContent="";
-  extRowState={};
-  rebuildExtYears(); extDlg.showModal();
-}
-function openExtensionFor(name){
-  // A pending option must be resolved before extending.
-  if(ST.hasPendingOption(name)){
-    alert(`${name} has a pending option. Accept or decline it in the Manage section before extending.`);
-    return;
-  }
-  const can=ST.expiringContracts().some(([n])=>n===name);
-  if(!can){ alert(`${name} has no expiring contract to extend (their deal already runs to the last charted season).`); return; }
-  clearSelection();
-  openExtensionDialog(name);
-}
-function extAvailableYears(){
-  const i=parseInt($("extPlayer").value);
-  if(isNaN(i)||!extExpiring[i]) return [];
-  return ST.yearCols.slice(ST.yearCols.indexOf(extExpiring[i][1])+1);
-}
-function rebuildExtYears(){
-  const box=$("extYears"); box.innerHTML="";
-  for(const yr of extAvailableYears()){
-    const l=document.createElement("label");
-    l.innerHTML=`<input type="checkbox" value="${yr}"> ${yr}`;
-    l.querySelector("input").onchange=rebuildExtSalaries; box.appendChild(l);}
-  rebuildExtSalaries();
-}
-function extChosenYears(){return [...$("extYears").querySelectorAll("input:checked")].map(i=>i.value);}
-$("extPlayer").onchange=rebuildExtYears;
-// Per-year salary state: yr -> {unit:"dollar"|"percent", value:number}
-let extRowState={};
-function capForYear(yr){const t=THRESHOLDS[parseInt(yr)]; return (t?t[0]:154.647)*1e6;}
-function extComputed(yr){
-  const st=extRowState[yr]; if(!st||isNaN(st.value)) return null;
-  return st.unit==="percent" ? capForYear(yr)*st.value/100 : st.value*1e6;
-}
-function rebuildExtSalaries(){
-  const box=$("extSalaries"); box.innerHTML="";
-  const chosen=extChosenYears();
-  $("extSalHdr").style.display = chosen.length ? "block" : "none";
-  if(!chosen.length){box.innerHTML='<div class="muted">Select extension years above.</div>'; extRowState={}; return;}
-  // keep state for still-selected years, drop the rest
-  const next={}; for(const yr of chosen) next[yr]=extRowState[yr]||{unit:"dollar",value:NaN};
-  extRowState=next;
-  for(const yr of chosen){
-    const st=extRowState[yr];
-    const row=document.createElement("div"); row.className="ext-row";
-    row.innerHTML=
-      `<span class="yr">${yr}</span>`+
-      `<input type="number" step="0.1" min="0" data-yr="${yr}" placeholder="0.0">`+
-      `<div class="unit-tog">`+
-        `<button data-u="dollar" class="${st.unit==="dollar"?"on":""}">$M</button>`+
-        `<button data-u="percent" class="${st.unit==="percent"?"on":""}">% cap</button>`+
-      `</div>`+
-      `<span class="calc" data-calc="${yr}"></span>`;
-    const inp=row.querySelector("input");
-    if(!isNaN(st.value)) inp.value=st.value;
-    inp.oninput=()=>{extRowState[yr].value=parseFloat(inp.value); updateExtCalc(yr);};
-    row.querySelectorAll(".unit-tog button").forEach(b=>b.onclick=()=>{
-      extRowState[yr].unit=b.dataset.u;
-      row.querySelectorAll(".unit-tog button").forEach(x=>x.classList.toggle("on",x===b));
-      updateExtCalc(yr);
-    });
-    box.appendChild(row);
-    updateExtCalc(yr);
-  }
-}
-function updateExtCalc(yr){
-  const el=document.querySelector(`[data-calc="${yr}"]`); if(!el) return;
-  const st=extRowState[yr];
-  const v=extComputed(yr);
-  if(v===null){el.textContent=""; return;}
-  el.textContent = st.unit==="percent"
-    ? `= $${(v/1e6).toFixed(2)}M`
-    : `= ${(v/capForYear(yr)*100).toFixed(1)}% of cap`;
-}
-$("extCancel").onclick=()=>extDlg.close();
-$("extSubmit").onclick=()=>{
-  const err=$("extErr"); err.textContent="";
-  const i=parseInt($("extPlayer").value);
-  if(isNaN(i)||!extExpiring[i]){err.textContent="Pick a player first."; return;}
-  const name=extExpiring[i][0];
-  const avail=extAvailableYears(), chosen=extChosenYears();
-  if(!chosen.length){err.textContent="Select at least one extension year."; return;}
-  const idx=chosen.map(y=>avail.indexOf(y));
-  if(!(idx[0]===0 && idx.every((v,k)=>v===k))){err.textContent="Years must be consecutive, starting with the first year after the contract ends."; return;}
-  const results=[];
-  for(const yr of chosen){
-    const st=extRowState[yr];
-    if(!st||isNaN(st.value)||st.value<0){err.textContent=`Enter a salary for ${yr}.`; return;}
-    const v=extComputed(yr);
-    const label = st.unit==="percent"
-      ? `${st.value.toFixed(1)}% of cap = $${(v/1e6).toFixed(2)}M`
-      : `$${(v/1e6).toFixed(2)}M`;
-    results.push([yr,v,label]);
-  }
-  const optLast=$("extOptFlag").checked;
-  for(const [yr,v,label] of results) ST.addExtension(name,yr,v, optLast&&yr===chosen[chosen.length-1], label);
-  extDlg.close(); rebuildSidebar(); redrawChart();
-};
 
 /* ── Trade dialog ── */
 const tradeDlg=$("tradeDialog"); let tradeRoster=[];
